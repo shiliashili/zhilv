@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>织律 Weaveline</title>
+
+  <!-- 国风字体：毛笔行书 + 宋体（加载失败时回落到系统楷体/宋体） -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;600&display=swap">
+
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <div class="loading-screen">
+      <div class="loading-seal">织</div>
+      <h1>织律</h1>
+      <p>WEAVELINE</p>
+      <div class="loading-spinner"></div>
+    </div>
+  </div>
+
+  <!-- Game Scripts -->
+  <script src="js/random.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/battle-core.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/game.js"></script>
+
+  <script>
+    // Start the game
+    window.addEventListener('DOMContentLoaded', () => {
+      game.start();
+    });
+  </script>
+</body>
+</html>

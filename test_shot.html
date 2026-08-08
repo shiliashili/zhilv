@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>screenshot harness</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;600&display=swap">
+  <link rel="stylesheet" href="css/style.css?v=3">
+</head>
+<body>
+  <div id="app"></div>
+  <script src="js/random.js?v=3"></script>
+  <script src="js/data.js?v=3"></script>
+  <script src="js/battle-core.js?v=3"></script>
+  <script src="js/audio.js?v=3"></script>
+  <script src="js/game.js?v=3"></script>
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const params = new URLSearchParams(location.search);
+      const target = params.get('screen') || 'menu';
+      game.start();
+      if (target === 'menu') return;
+      if (target === 'char') { game.selectCharacter(); return; }
+      if (target === 'route') {
+        game.pickCharacter('swordsman');
+        game.pickSword('sword_liuguang');
+        return;
+      }
+      if (target === 'battle' || target === 'battle_ma') {
+        game.pickCharacter(target === 'battle_ma' ? 'martialArtist' : 'swordsman');
+        if (target !== 'battle_ma') game.pickSword('sword_liuguang');
+        game.currentNode = { type: 'elite' };
+        game.startBattle(target === 'battle_ma' ? 'elite' : 'normal');
+        // 快进到中段让演出元素出现
+        setTimeout(() => {}, 100);
+        return;
+      }
+      if (target === 'reward') {
+        game.pickCharacter('martialArtist');
+        game.currentNode = { type: 'battle' };
+        game.battleResult = { rounds: 6, proficiency: game.proficiency, player: { hp: 80, maxHp: 92 }, enemies: [] };
+        game.showBattleReward(15, game._generateLoot(false, false), game.battleResult);
+      }
+      if (params.get('debug')) {
+        setTimeout(() => {
+          const btn = document.querySelector('.loot-card .btn');
+          const card = document.querySelector('.loot-card');
+          const cs = btn ? getComputedStyle(btn) : {};
+          const pre = document.createElement('pre');
+          pre.style.cssText = 'position:fixed;top:0;left:0;background:#fff;color:#000;z-index:999;font-size:10px;margin:0;';
+          pre.textContent = JSON.stringify({
+            btnRect: btn?.getBoundingClientRect(),
+            cardRect: card?.getBoundingClientRect(),
+            pos: cs.position, right: cs.right, top: cs.top, transform: cs.transform
+          }, null, 1);
+          document.body.appendChild(pre);
+        }, 800);
+      }
+    });
+  </script>
+</body>
+</html>
