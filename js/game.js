@@ -452,6 +452,7 @@ class GameController {
       equipment: this.equipment,
       signatureSword: this.signatureSword,
       powerBuff: this.powerBuff,
+      currentHp: this.hp,
       enemies: encounter.enemies.map(e => ({ ...e }))
     };
 
@@ -461,8 +462,8 @@ class GameController {
     this._liveIntentPoints = 0;
     this._liveIntentLevel = 0;
     this._liveMomentum = 0;
-    // 演出用实时血量（随事件逐帧更新，避免开局即显示结算值）
-    this._livePlayerHp = setup.character.maxHp;
+    // 演出用实时血量（用当前退出血量，不是 maxHp）
+    this._livePlayerHp = this.hp;
     this._liveEnemyHp = encounter.enemies.map(e => e.maxHp);
 
     audio.playBgm(type === 'boss' ? 'boss' : type === 'elite' ? 'elite' : 'battle');
@@ -539,7 +540,7 @@ class GameController {
             <div class="resource-indicator">
               <span>${char.resource.name}
                 ${char.id === 'swordsman' ?
-                `<span class="res-val intent-level" id="${char.resource.key}">lv.0</span><span class="res-val res-sub" id="${char.resource.key}Points">0/3</span>` :
+                `<span class="res-val intent-level" id="${char.resource.key}">lv.0</span>&nbsp;&nbsp;&nbsp;<span class="res-val res-sub" id="${char.resource.key}Points">0/3</span>` :
                 `<span class="res-val" id="${char.resource.key}">0</span>/${resMax}`
                 }
               </span>
@@ -1881,6 +1882,8 @@ class GameController {
   nextChapter() {
     audio.playUiClick();
     audio.stopBgm();
+    // 新章开局：恢复满血
+    this.hp = this.maxHp;
     this.showRouteMap();
   }
 

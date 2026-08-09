@@ -116,11 +116,12 @@ class BattleCore {
 
   _init() {
     const charDef = this.setup.character;
+    const currentHp = (this.setup.currentHp != null) ? this.setup.currentHp : charDef.maxHp;
     this.player = {
       id: 'player',
       name: charDef.name,
       maxHp: charDef.maxHp,
-      hp: charDef.maxHp,
+      hp: Math.min(charDef.maxHp, Math.max(1, currentHp)),
       atk: charDef.atk || 15,
       defense: 0,
       speed: 5,

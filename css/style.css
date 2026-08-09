@@ -809,7 +809,7 @@ body {
   transition: all 0.3s;
 }
 .intent-level { font-weight: 700; color: var(--gold-bright); }
-.res-sub { font-size: 10px; color: var(--paper-mute); margin-left: 2px; }
+.res-sub { font-size: 10px; color: var(--paper-mute); margin-left: 12px; }
 
 /* Battle Log */
 .battle-log {
