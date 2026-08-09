@@ -439,12 +439,7 @@ class GameController {
   startBattle(type) {
     const encounterRng = new SeededRandom(this.seed + this.currentLayer * 1000 + this.currentRegion * 10000);
     const encounter = generateEncounter(this.currentLayer, encounterRng, this.currentRegion);
-
-    // Override type if needed
-    if (type === 'boss') {
-      encounter.type = 'boss';
-      encounter.enemies = [ENEMIES.find(e => e.type === 'boss')];
-    }
+    // generateEncounter 已按章节 + 层数正确生成所有敌人（含 Boss），不再覆盖
 
     const setup = {
       character: this.character,
