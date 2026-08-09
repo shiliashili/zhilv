@@ -26,10 +26,9 @@ class BattleCore {
     this.pendingUpgrades = [];
 
     // Player-specific resources
-    this.swordIntent = 0;   // 剑意
-    this.momentum = 0;      // 蓄势
-    this.swordSong = false; // 剑鸣
-    this.firstQiUsed = false; // For 太初
+    this.swordIntent = 0;   // 剑意层数（0-3，每层 +10% 伤害）；3 层可释放大招，释放后 -1
+    this.momentum = 0;      // 蓄势（武圣）
+    this.firstSwordStackFree = false; // For 太初：开战自送 1 层
     this.totalHitsDealt = 0;
     this.tookDamageLastRound = false;
 
@@ -61,6 +60,13 @@ class BattleCore {
     if (this.setup.powerBuff) this._eq.dmgMultAdd += this.setup.powerBuff;
 
     this._init();
+
+    // 太初：每场战斗开场自动获得 1 层剑意
+    const sigSwordEf = this.setup.signatureSword?.effect;
+    if (sigSwordEf?.firstCombatStackFree && this.setup.character.id === 'swordsman') {
+      this.swordIntent = 1;
+      this._log('🌟 太初：开战自送 1 层剑意');
+    }
 
     // 战前护盾（回春丹/昆仑玉/等）
     if (this._eq.startShieldPct > 0) {
@@ -243,6 +249,9 @@ class BattleCore {
       return cooldown <= 0;
     });
 
+    // 大招剑意层数门禁：层数不够时将权重视为 0（强制不抽中）
+    // 见 _pickSkill 中的 weight 调整
+
     if (available.length === 0) {
       this._log('所有技能冷却中，使用基础攻击');
       this._basicAttack();
@@ -291,8 +300,16 @@ class BattleCore {
         }
       }
 
+      // 大招剑意层数门禁：层数不够时不抽中（过滤掉大招）
+      if (s.requireSwordIntent) {
+        let required = s.requireSwordIntent;
+        const sigSwordEf = this.setup.signatureSword?.effect;
+        if (sigSwordEf?.ultimateCostReduce) required = Math.max(1, required - sigSwordEf.ultimateCostReduce);
+        if (this.swordIntent < required) return null;
+      }
+
       return { skill: s, weight: Math.max(1, w) };
-    });
+    }).filter(Boolean);
 
     // Pick skill
     const picked = this.skillRng.weightedPick(weighted.map(w => ({ value: w.skill, weight: w.weight })));
@@ -376,43 +393,23 @@ class BattleCore {
   _executePlayerSkill(skill, options = {}) {
     let { bonusMultiplier = 1, isHeavy = false } = options;
 
-    // Check for 剑意/盛放 mechanics
-    let isBloom = false;
-    if (skill.bloomEffect && skill.bloomCost) {
-      let cost = skill.bloomCost;
-      // 惊鸿 sword reduces bloom cost
-      if (this.setup.signatureSword && this.setup.signatureSword.id === 'sword_jinghong') {
-        cost = Math.max(1, cost - 1);
+    // 大招逻辑：要求剑意 >= requireSwordIntent，释放后层数 -consumeSwordIntent
+    let isUltimate = false;
+    if (skill.requireSwordIntent) {
+      let required = skill.requireSwordIntent;
+      // 惊鸿：大招要求-1（但不低于 1）
+      const sigSwordEf = this.setup.signatureSword?.effect;
+      if (sigSwordEf?.ultimateCostReduce) required = Math.max(1, required - sigSwordEf.ultimateCostReduce);
+      // 防御性守卫：层数不够时此技能不应被调用（pick 阶段已过滤）
+      if (this.swordIntent < required) {
+        this._log(`⚠️ 剑意不足（${this.swordIntent}/${required}），无法释放大招`);
+        return;
       }
-      // 太初 first qi free
-      if (this.setup.signatureSword && this.setup.signatureSword.id === 'sword_taichu' && !this.firstQiUsed) {
-        cost = 0;
-        this.firstQiUsed = true;
-      }
-
-      if (this.swordIntent >= cost) {
-        this.swordIntent -= cost;
-        isBloom = true;
-        this._log(`✨ 盛放！消耗${cost}剑意，剩余剑意: ${this.swordIntent}`);
-      }
-    }
-
-    // 万剑归流 / 一剑开天: consume all intent
-    if (skill.consumeAllIntent && this.swordIntent > 0) {
-      this._log(`⚡ 消耗全部${this.swordIntent}点剑意！`);
-      const consumed = this.swordIntent;
-      this.swordIntent = 0;
-      // Extra hits for 万剑归流
-      if (skill.extraHitsPerIntent) {
-        skill = { ...skill, effects: [{ ...skill.effects[0],
-          hits: skill.effects[0].hits + consumed * skill.extraHitsPerIntent
-        }]};
-      }
-    }
-    if (skill.intentBoost && this.swordIntent >= skill.intentBoost.threshold) {
-      const consumed = this.swordIntent;
-      this.swordIntent = 0;
-      this._log(`⚡ 一剑开天！消耗全部${consumed}点剑意！`);
+      const consume = skill.consumeSwordIntent || 1;
+      const before = this.swordIntent;
+      this.swordIntent = Math.max(0, this.swordIntent - consume);
+      isUltimate = true;
+      this._log(`⚔️ 大招释放！剑意层数 ${before} → ${this.swordIntent}`);
     }
 
     // 演出元数据：供表现层按事件驱动斩击/剑气/震屏等效果，不影响结算
@@ -421,22 +418,18 @@ class BattleCore {
       name: skill.name,
       category: skill.category,
       tag: skill.tag,
-      preset: isBloom ? (skill.bloomPreset || skill.hitPreset) : (skill.hitPreset || 'standard'),
+      preset: skill.hitPreset || 'standard',
       isHeavy,
-      isBloom,
-      impactSfx: isBloom ? (skill.bloomSfx || skill.impactSfx) : skill.impactSfx,
-      castSfx: isBloom ? (skill.bloomSfx || skill.castSfx) : skill.castSfx,
+      isBloom: false, // 旧盛放机制已移除
+      isUltimate,
+      impactSfx: skill.impactSfx,
+      castSfx: skill.castSfx,
       multiHit: !!skill.multiHit,
-      ultimate: !!skill.tier || skill.tag.includes('绝技')
+      ultimate: !!skill.tier || skill.tag.includes('绝技') || skill.tag.includes('大招')
     };
 
     // Determine effects to use
-    let effects;
-    if (isBloom && skill.bloomEffect) {
-      effects = [skill.bloomEffect];
-    } else {
-      effects = skill.effects;
-    }
+    let effects = skill.effects;
 
     // 武圣 heavy bonus
     if (isHeavy && skill.heavyBonus) {
@@ -497,10 +490,18 @@ class BattleCore {
     // Apply on-hit effects
     if (skill.onHit) {
       if (skill.onHit.swordIntent) {
-        this.swordIntent = Math.min(6, this.swordIntent + skill.onHit.swordIntent);
-        if (this.swordIntent >= 6 && !this.swordSong) {
-          this.swordSong = true;
-          this._log(`🔔 剑鸣！剑意达到6，下一次剑气权重×1.8并追加追击`);
+        const before = this.swordIntent;
+        this.swordIntent = Math.min(3, this.swordIntent + skill.onHit.swordIntent);
+        if (this.swordIntent > before) {
+          this._log(`✦ 剑意 +${this.swordIntent - before}，当前层数: ${this.swordIntent}/3`);
+        }
+        // 太初：低血量时，剑技命中额外 +1 层
+        const sigSwordEf = this.setup.signatureSword?.effect;
+        if (sigSwordEf?.lowHpSwordBonus &&
+            this.player.hp / this.player.maxHp < sigSwordEf.lowHpSwordBonus.lowHpThreshold &&
+            this.swordIntent < 3) {
+          this.swordIntent = Math.min(3, this.swordIntent + sigSwordEf.lowHpSwordBonus.intentBonus);
+          this._log(`🌟 太初：低血量剑技加成，剑意层数: ${this.swordIntent}/3`);
         }
       }
     }
@@ -570,16 +571,7 @@ class BattleCore {
       }
     }
 
-    // 剑鸣: sword qi weight bonus and chase
-    if (this.swordSong && (skill.category === 'sword_qi' || skill.tag === '剑气·绝技')) {
-      this.swordSong = false;
-      this._log('🔔 剑鸣释放！额外追击');
-      const target = this._pickTarget('random');
-      if (target) {
-        const chaseDmg = this.player.atk * 0.4 * bonusMultiplier;
-        this._dealDamage(this.player.id, target.id, Math.floor(chaseDmg), ['swordSong']);
-      }
-    }
+    // 剑鸣机制已移除（剑意改 3 层堆叠系统）
 
     // Proficiency gain
     const hasReplayModule = this.setup.equipment?.some(e => e.id === 'eq_huifeng_jian');
@@ -611,16 +603,20 @@ class BattleCore {
   _resolveDamage(skill, effect, target, bonusMultiplier, isHeavy) {
     let rawDmg = effect.base; // 具体伤害数值（来自 data.js）
 
-    // Skill specific boost
-    if (skill.intentBoost && this.swordIntent >= skill.intentBoost.threshold) {
-      rawDmg = skill.intentBoost.damage; // 具体伤害数值
-    }
-
     // Proficiency bonus
     const prof = this.proficiency[skill.id];
     if (prof) {
       const profMult = [1.0, 1.08, 1.18, 1.30, 1.45][prof.level - 1] || 1.0;
       rawDmg *= profMult;
+    }
+
+    // 剑意层数加成：每层 +10% 伤害（仅剑技/剑气，不含大招；大招已自含强力设定）
+    if (skill.category === 'sword_technique' || skill.category === 'sword_qi') {
+      rawDmg *= (1 + this.swordIntent * 0.10);
+    }
+    // 惊鸿：大招伤害额外 +20%
+    if (skill.category === 'sword_ultimate' && this.setup.signatureSword?.effect?.ultimateBonus) {
+      rawDmg *= (1 + this.setup.signatureSword.effect.ultimateBonus);
     }
 
     // 阴阳珏：不同标签相邻+8%效果
@@ -734,12 +730,14 @@ class BattleCore {
 
     // Check if skill has execute trait
     const isExecuteSkill = skill.execute ||
-      (skill.bloomEffect && skill.bloomEffect.execute) ||
+      (skill.effects && skill.effects[0] && skill.effects[0].execute) ||
       (skill.heavyBonus && skill.heavyBonus.execute);
 
     if (isExecuteSkill && target.definition && target.definition.type !== 'boss') {
       const hpPercent = target.hp / target.maxHp;
-      const threshold = skill.bloomEffect?.execute || 0.18;
+      const threshold = (skill.effects && skill.effects[0] && skill.effects[0].execute) ||
+                        skill.execute ||
+                        0.18;
       if (hpPercent <= threshold) {
         target.hp = 0;
         target.alive = false;
@@ -1081,8 +1079,10 @@ class BattleCore {
         this._swordChain.push(skill.id);
         if (this._swordChain.length > 3) this._swordChain.shift();
         if (this._swordChain.length === 3 && new Set(this._swordChain).size === 3) {
-          this.swordIntent = Math.min(6, this.swordIntent + 1);
-          this._log('✨ 流光：连续3次不同技能，剑意+1！');
+          if (this.swordIntent < 3) {
+            this.swordIntent += 1;
+            this._log('✨ 流光：连续3次不同技能，剑意层数 +1！');
+          }
           this._swordChain = [];
         }
       }

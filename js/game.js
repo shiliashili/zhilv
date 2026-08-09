@@ -63,12 +63,12 @@ class GameController {
           <div class="menu-version">v0.2 国风水墨 · 垂直切片原型</div>
           <div class="menu-characters">
             <div class="char-preview swordsman">
-              <div class="char-icon">剑</div>
+              <div class="char-icon" style="background-image:url('assets/char_swordsman.jpg')"></div>
               <div class="char-name">剑圣</div>
               <div class="char-desc">灵巧华丽 · 剑气纵横</div>
             </div>
             <div class="char-preview martial">
-              <div class="char-icon">武</div>
+              <div class="char-icon" style="background-image:url('assets/char_martial.jpg')"></div>
               <div class="char-name">武圣</div>
               <div class="char-desc">大开大合 · 以力破巧</div>
             </div>
@@ -94,7 +94,7 @@ class GameController {
               <ul>
                 <li>每回合从技能池中<strong>按权重随机抽取</strong>一个技能自动释放</li>
                 <li>技能有权重、冷却、自动目标规则</li>
-                <li><strong>剑圣</strong>：积累「剑意」，消耗剑意触发「盛放」</li>
+                <li><strong>剑圣</strong>：剑技命中积累「剑意层数」（最多3层，每层+10%伤害）；3层可释放大招，释放后层数-1</li>
                 <li><strong>武圣</strong>：积累「蓄势」，达到 3 后触发「重式」爆发</li>
               </ul>
             </div>
@@ -133,28 +133,27 @@ class GameController {
         <div class="char-cards">
           <div class="char-card swordsman" onclick="game.pickCharacter('swordsman')">
             <div class="char-card-head">
-              <div class="char-glyph">剑</div>
+              <div class="char-portrait" style="background-image:url('assets/char_swordsman.jpg')"></div>
               <div>
                 <h3>剑圣</h3>
                 <div class="char-stats">
-                  <div class="stat">生命 68</div>
-                  <div class="stat">剑意 0-6</div>
+                  <div class="stat">生命 95</div>
+                  <div class="stat">剑意 0-3 层</div>
                   <div class="stat">技能槽 6</div>
                 </div>
               </div>
             </div>
-            <p>灵巧华丽，招式流动，剑气纵横。积累剑意触发盛放，名剑选择改变流派。</p>
+            <p>灵巧华丽，招式流动，剑气纵横。剑技命中积累剑意层，每层+10%伤害；3层可释放大招。</p>
             <div class="char-skills-preview">
               <span class="skill-tag">流云刺</span>
               <span class="skill-tag">回风斩</span>
-              <span class="skill-tag">青锋剑气</span>
-              <span class="skill-tag tag-more">+9</span>
+              <span class="skill-tag tag-more">+13</span>
             </div>
             <button class="btn btn-primary btn-block">选择剑圣</button>
           </div>
           <div class="char-card martial" onclick="game.pickCharacter('martialArtist')">
             <div class="char-card-head">
-              <div class="char-glyph">武</div>
+              <div class="char-portrait" style="background-image:url('assets/char_martial.jpg')"></div>
               <div>
                 <h3>武圣</h3>
                 <div class="char-stats">
@@ -168,8 +167,7 @@ class GameController {
             <div class="char-skills-preview">
               <span class="skill-tag">开山拳</span>
               <span class="skill-tag">裂地踢</span>
-              <span class="skill-tag">混元劲</span>
-              <span class="skill-tag tag-more">+9</span>
+              <span class="skill-tag tag-more">+10</span>
             </div>
             <button class="btn btn-primary btn-block">选择武圣</button>
           </div>
@@ -523,7 +521,7 @@ class GameController {
           <!-- Player side（下方） -->
           <div class="player-area">
             <div class="player-sprite" id="playerSprite">
-              <div class="sprite-body ${char.id}">
+              <div class="sprite-body ${char.id} has-portrait" style="background-image:url('${char.portrait}')">
                 <div class="sprite-aura"></div>
                 <span class="sprite-glyph">${char.glyph}</span>
               </div>
@@ -653,7 +651,7 @@ class GameController {
   _showSkillCast(data) {
     const skill = data.skill;
     const overlay = document.getElementById('battleOverlay');
-    const isUltimate = skill.tag.includes('绝技');
+    const isUltimate = skill.tag.includes('绝技') || skill.tag.includes('大招');
 
     // 高亮当前技能槽
     document.querySelectorAll('.skill-mini').forEach(el => el.classList.remove('active-cast'));
@@ -661,8 +659,14 @@ class GameController {
     if (chip) chip.classList.add('active-cast');
 
     // 演出用资源近似推进
-    if (skill.category === 'sword_technique' || skill.category === 'sword_qi') {
-      if (skill.onHit?.swordIntent) this._liveIntent = Math.min(6, this._liveIntent + 1);
+    // 剑技：命中后剑意层数 +1（cap 3）
+    if (skill.category === 'sword_technique') {
+      if (skill.onHit?.swordIntent) this._liveIntent = Math.min(3, this._liveIntent + 1);
+    }
+    // 剑气：不增减（已不再消耗剑意）
+    // 大招：释放后层数 -1（仅在大于 0 时减少，避免跌破 0）
+    if (skill.category === 'sword_ultimate') {
+      this._liveIntent = Math.max(0, this._liveIntent - 1);
     }
     if (skill.category === 'fist' || skill.category === 'kick' || skill.category === 'inner_power') {
       this._liveMomentum = Math.min(3, this._liveMomentum + 1);
@@ -1497,7 +1501,7 @@ class GameController {
       <div class="stats-overlay" id="statsOverlay" onclick="game.closeStatsPanel()">
         <div class="stats-panel" onclick="event.stopPropagation()">
           <div class="stats-header">
-            <h2>${char.glyph} ${char.name} · 当前属性</h2>
+            <h2><span class="stats-portrait" style="background-image:url('${char.portrait}')"></span> ${char.name} · 当前属性</h2>
             <button class="btn btn-ghost btn-sm" onclick="game.closeStatsPanel()">✕</button>
           </div>
 
@@ -1534,8 +1538,8 @@ class GameController {
             ` : `
             <div class="stats-subsection">
               <h4>专属资源</h4>
-              <span class="resource-tag">剑意 0–6</span>
-              <span class="resource-desc">剑技+1剑意，剑意≥2自动盛放剑气</span>
+              <span class="resource-tag">剑意 0–3 层</span>
+              <span class="resource-desc">剑技命中层数+1，每层+10%伤害；3层可释放大招</span>
             </div>
             `}
             ${this.equipment.length > 0 ? `

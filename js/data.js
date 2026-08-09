@@ -179,34 +179,37 @@ const EQUIPMENT = [
 ];
 
 // ---- 名剑 (Signature Swords for 剑圣) ----
+// 每把名剑都对剑意层数机制做了适配：emitEffect 内字段被 battle-core.js 解读为 stack 版本。
 const SIGNATURE_SWORDS = [
   { id: 'sword_liuguang', name: '流光',
-    desc: '本次释放技能与上次不同，技能效果+12%；连续3次不同技能额外获得1剑意',
+    desc: '本次释放技能与上次不同，技能效果+12%；连续3次不同技能额外获得1剑意层',
     effect: { diffSkillBonus: 0.12, chain3Bonus: { swordIntent: 1 } } },
   { id: 'sword_jinghong', name: '惊鸿',
-    desc: '剑气盛放只消耗1剑意；盛放剑气的追击伤害+20%',
-    effect: { bloomCostReduce: 1, bloomChaseBonus: 0.20 } },
+    desc: '大招释放所需剑意层-1（2层即可释放）；大招伤害额外+20%',
+    effect: { ultimateCostReduce: 1, ultimateBonus: 0.20 } },
   { id: 'sword_duanyue', name: '断岳',
     desc: '每累计7次有效命中，下次单体技能变为必暴+处决(普通敌人<18%生命)',
     effect: { hitCount7: { critGuaranteed: true, executeThreshold: 0.18 } } },
   { id: 'sword_taichu', name: '太初',
-    desc: '每场战斗第1次剑气不消耗剑意；生命<40%时剑技权重×1.25、获得剑意量+1',
-    effect: { firstQiFree: true, lowHpSwordBonus: { weightMult: 1.25, intentBonus: 1 }, lowHpThreshold: 0.40 } }
+    desc: '每场战斗开场自动获得1层剑意；生命<40%时剑技权重×1.25、命中时剑意+1',
+    effect: { firstCombatStackFree: true, lowHpSwordBonus: { weightMult: 1.25, intentBonus: 1 }, lowHpThreshold: 0.40 } }
 ];
 
 // ---- Character Skills ----
 // 剑圣 (Swordsman) skills —— 伤害为具体数值（每 hit）
+// 剑意层数机制：0-3 层，每层 +10% 伤害。剑技命中后层数+1。三层满后可以释放"大招"（在 6 个普通技能之外的 3 个终极技能），释放后层数 -1。
 const SWORDSMAN_SKILLS = [
+  // ===================== 剑技（命中后 +1 层剑意） =====================
   { id: 's_cloud_stab', name: '流云刺', category: 'sword_technique', tag: '剑技',
     baseWeight: 120, cooldown: 0, target: 'lowest_hp',
-    desc: '造成 2 段 ×12 伤害；命中后+1剑意',
+    desc: '造成 2 段 ×12 伤害；命中后剑意层数 +1',
     effects: [{ type: 'damage', base: 12, hits: 2 }],
     onHit: { swordIntent: 1 },
     hitPreset: 'light', castSfx: 'blade_light', impactSfx: 'blade_light' },
 
   { id: 's_whirlwind', name: '回风斩', category: 'sword_technique', tag: '剑技',
     baseWeight: 105, cooldown: 0, target: 'random',
-    desc: '造成 18 伤害；若上次技能不同，再追加 8 伤害',
+    desc: '造成 18 伤害；若上次技能不同，再追加 8 伤害；命中后剑意层数 +1',
     effects: [{ type: 'damage', base: 18, hits: 1 }],
     chainBonus: { damage: 0.45, condition: 'different_skill' },
     onHit: { swordIntent: 1 },
@@ -214,7 +217,7 @@ const SWORDSMAN_SKILLS = [
 
   { id: 's_swallow_return', name: '燕返', category: 'sword_technique', tag: '剑技',
     baseWeight: 85, cooldown: 1, target: 'highest_hp',
-    desc: '造成 25 伤害；若上一招为剑气，本次+9伤害',
+    desc: '造成 25 伤害；若上一招为剑气，本次+9伤害；命中后剑意层数 +1',
     effects: [{ type: 'damage', base: 25, hits: 1 }],
     conditionBonus: { damage: 0.35, condition: 'last_skill_qi' },
     onHit: { swordIntent: 1 },
@@ -222,14 +225,14 @@ const SWORDSMAN_SKILLS = [
 
   { id: 's_moon_combo', name: '踏月连环', category: 'sword_technique', tag: '剑技',
     baseWeight: 70, cooldown: 1, target: 'random',
-    desc: '造成 4 段 ×7 伤害；每段独立判定暴击；总计只+1剑意',
+    desc: '造成 4 段 ×7 伤害；每段独立判定暴击；命中后剑意层数 +1',
     effects: [{ type: 'damage', base: 7, hits: 4, critPerHit: true }],
     onHit: { swordIntent: 1 },
     hitPreset: 'standard', castSfx: 'blade_multi', impactSfx: 'blade_multi', multiHit: true },
 
   { id: 's_forest_pierce', name: '穿林破影', category: 'sword_technique', tag: '剑技',
     baseWeight: 90, cooldown: 0, target: 'lowest_hp',
-    desc: '造成 20 伤害；目标生命<50%时再追击 11 伤害',
+    desc: '造成 20 伤害；目标生命<50%时再追击 11 伤害；命中后剑意层数 +1',
     effects: [{ type: 'damage', base: 20, hits: 1 }],
     executeBonus: { threshold: 0.50, chaseDamage: 0.55 },
     onHit: { swordIntent: 1 },
@@ -237,69 +240,83 @@ const SWORDSMAN_SKILLS = [
 
   { id: 's_reflect_sword', name: '折光回剑', category: 'sword_technique', tag: '剑技',
     baseWeight: 75, cooldown: 1, target: 'last_attacker',
-    desc: '造成 22 伤害；若上一轮受到伤害，本次+7伤害',
+    desc: '造成 22 伤害；若上一轮受到伤害，本次+7伤害；命中后剑意层数 +1',
     effects: [{ type: 'damage', base: 22, hits: 1 }],
     revengeBonus: { damage: 0.30, condition: 'took_damage_last_round' },
     onHit: { swordIntent: 1 },
     hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
 
+  // ===================== 剑气（无成本、不增剑意） =====================
   { id: 's_green_edge_qi', name: '青锋剑气', category: 'sword_qi', tag: '剑气',
     baseWeight: 100, cooldown: 0, target: 'lowest_hp',
-    desc: '基础 21 伤害；盛放：35 伤害（消耗2剑意）',
-    effects: [{ type: 'damage', base: 21, hits: 1 }],
-    bloomEffect: { type: 'damage', base: 35, hits: 1 },
-    bloomCost: 2,
-    hitPreset: 'standard', bloomPreset: 'heavy',
-    castSfx: 'sword_qi', bloomSfx: 'sword_qi_bloom',
-    impactSfx: 'sword_qi' },
+    desc: '造成 35 伤害；单体高输出',
+    effects: [{ type: 'damage', base: 35, hits: 1 }],
+    hitPreset: 'standard',
+    castSfx: 'sword_qi', impactSfx: 'sword_qi' },
 
   { id: 's_river_qi', name: '横江剑气', category: 'sword_qi', tag: '剑气',
     baseWeight: 70, cooldown: 1, target: 'all_enemies',
-    desc: '基础全体 11 伤害；盛放：全体 18 伤害',
-    effects: [{ type: 'damage', base: 11, hits: 1, allEnemies: true }],
-    bloomEffect: { type: 'damage', base: 18, hits: 1, allEnemies: true },
-    bloomCost: 2,
-    hitPreset: 'standard', bloomPreset: 'heavy',
-    castSfx: 'sword_qi', bloomSfx: 'sword_qi_bloom',
-    impactSfx: 'sword_qi' },
+    desc: '全体 18 伤害',
+    effects: [{ type: 'damage', base: 18, hits: 1, allEnemies: true }],
+    hitPreset: 'standard',
+    castSfx: 'sword_qi', impactSfx: 'sword_qi' },
 
   { id: 's_hundred_step_frost', name: '百步飞霜', category: 'sword_qi', tag: '剑气',
     baseWeight: 55, cooldown: 2, target: 'lowest_hp',
-    desc: '基础 26 伤害；盛放：41 伤害，普通敌人<15%生命处决',
-    effects: [{ type: 'damage', base: 26, hits: 1 }],
-    bloomEffect: { type: 'damage', base: 41, hits: 1, execute: 0.15 },
-    bloomCost: 2,
-    hitPreset: 'heavy', bloomPreset: 'execute',
-    castSfx: 'sword_qi', bloomSfx: 'sword_qi_bloom',
-    impactSfx: 'sword_qi' },
+    desc: '造成 41 伤害；普通敌人<15%生命处决',
+    effects: [{ type: 'damage', base: 41, hits: 1, execute: 0.15 }],
+    hitPreset: 'heavy',
+    castSfx: 'sword_qi', impactSfx: 'sword_qi' },
 
   { id: 's_sword_rain', name: '剑雨千寻', category: 'sword_qi', tag: '剑气',
     baseWeight: 50, cooldown: 2, target: 'random',
-    desc: '基础 7 伤害 ×5 段；盛放改为 7 伤害 ×8 段',
-    effects: [{ type: 'damage', base: 7, hits: 5 }],
-    bloomEffect: { type: 'damage', base: 7, hits: 8 },
-    bloomCost: 2,
-    hitPreset: 'light', bloomPreset: 'standard',
-    castSfx: 'sword_qi', bloomSfx: 'sword_qi_bloom',
-    impactSfx: 'sword_qi', multiHit: true },
+    desc: '随机目标 7 伤害 ×8 段',
+    effects: [{ type: 'damage', base: 7, hits: 8 }],
+    hitPreset: 'light',
+    castSfx: 'sword_qi', impactSfx: 'sword_qi', multiHit: true },
 
+  // ===================== 旧·绝技（不再依赖剑意，但保留强力效果） =====================
   { id: 's_ten_thousand_swords', name: '万剑归流', category: 'sword_qi', tag: '剑气·绝技',
-    baseWeight: 28, cooldown: 3, target: 'random',
-    desc: '消耗当前全部剑意；基础4段，每消耗1剑意+1段，每段 8 伤害',
-    effects: [{ type: 'damage', base: 8, hits: 4 }],
-    consumeAllIntent: true, extraHitsPerIntent: 1,
+    baseWeight: 28, cooldown: 4, target: 'random',
+    desc: '随机目标 8 伤害 ×6 段（不再消耗剑意；冷却4回合）',
+    effects: [{ type: 'damage', base: 8, hits: 6 }],
     hitPreset: 'standard', sweetener: 'heavy',
     castSfx: 'sword_qi_bloom', impactSfx: 'sword_qi_bloom',
     tier: 'custom', multiHit: true },
 
   { id: 's_one_sword_sky', name: '一剑开天', category: 'sword_technique', tag: '剑技·绝技',
-    baseWeight: 24, cooldown: 3, target: 'highest_hp',
-    desc: '造成 48 伤害；剑意≥4时自动消耗全部剑意，改为 78 伤害并触发重击处决演出',
-    effects: [{ type: 'damage', base: 48, hits: 1 }],
-    intentBoost: { threshold: 4, damage: 78, consumeAll: true },
+    baseWeight: 24, cooldown: 4, target: 'highest_hp',
+    desc: '造成 78 伤害，附带处决演出（不再依赖剑意；冷却4回合）',
+    effects: [{ type: 'damage', base: 78, hits: 1 }],
     hitPreset: 'execute', sweetener: 'execute',
     castSfx: 'sword_qi_bloom', impactSfx: 'execute',
-    tier: 'custom' }
+    tier: 'custom' },
+
+  // ===================== 新增：3 个大招（需 3 层剑意，释放后层数 -1） =====================
+  { id: 's_spirit_roundslash', name: '气刃大回转', category: 'sword_ultimate', tag: '大招',
+    baseWeight: 110, cooldown: 2, target: 'highest_hp',
+    desc: '【需3层剑意】释放后层数-1；造成 65 伤害，并使目标破甲3层',
+    effects: [{ type: 'damage', base: 65, hits: 1 }],
+    applyStatus: { status: 'armorBreak', stacks: 3 },
+    requireSwordIntent: 3, consumeSwordIntent: 1,
+    hitPreset: 'execute', sweetener: 'heavy',
+    castSfx: 'sword_qi_bloom', impactSfx: 'execute', tier: 'custom' },
+
+  { id: 's_iaigiri', name: '一闪·居合', category: 'sword_ultimate', tag: '大招',
+    baseWeight: 110, cooldown: 2, target: 'highest_hp',
+    desc: '【需3层剑意】释放后层数-1；造成 50 伤害；目标<30%生命直接处决',
+    effects: [{ type: 'damage', base: 50, hits: 1, execute: 0.30 }],
+    requireSwordIntent: 3, consumeSwordIntent: 1,
+    hitPreset: 'execute', sweetener: 'execute',
+    castSfx: 'sword_qi_bloom', impactSfx: 'execute', tier: 'custom' },
+
+  { id: 's_eightway_slash', name: '剑廿三十·八方斩', category: 'sword_ultimate', tag: '大招',
+    baseWeight: 80, cooldown: 3, target: 'all_enemies',
+    desc: '【需3层剑意】释放后层数-1；全体 18 伤害 ×4 段',
+    effects: [{ type: 'damage', base: 18, hits: 4, allEnemies: true }],
+    requireSwordIntent: 3, consumeSwordIntent: 1,
+    hitPreset: 'heavy', sweetener: 'heavy',
+    castSfx: 'sword_qi_bloom', impactSfx: 'sword_qi_bloom', tier: 'custom', multiHit: true }
 ];
 
 // 武圣 (Martial Artist) skills —— 伤害为具体数值（每 hit）
@@ -395,20 +412,20 @@ const MARTIALARTIST_SKILLS = [
 // ---- Characters ----
 const CHARACTERS = {
   swordsman: {
-    id: 'swordsman', name: '剑圣', className: '剑圣', glyph: '剑',
+    id: 'swordsman', name: '剑圣', className: '剑圣', glyph: '剑', portrait: 'assets/char_swordsman.jpg',
     maxHp: 95, atk: 23, skillSlots: 6,
-    startingSkills: ['s_cloud_stab', 's_whirlwind', 's_green_edge_qi'],
+    startingSkills: ['s_cloud_stab', 's_whirlwind'],
     skillPool: SWORDSMAN_SKILLS,
-    resource: { name: '剑意', key: 'swordIntent', max: 6, start: 0 },
+    resource: { name: '剑意', key: 'swordIntent', max: 3, start: 0 },
     signatureChoices: SIGNATURE_SWORDS,
-    streakMultipliers: [{ after: 2, mult: 0.45 }], // Stronger streak protection
+    streakMultipliers: [{ after: 2, mult: 0.45 }],
     color: '#4FC3F7', bgColor: '#E1F5FE',
     description: '灵巧华丽，招式流动，剑气纵横'
   },
   martialArtist: {
-    id: 'martialArtist', name: '武圣', className: '武圣', glyph: '武',
+    id: 'martialArtist', name: '武圣', className: '武圣', glyph: '武', portrait: 'assets/char_martial.jpg',
     maxHp: 92, atk: 18, skillSlots: 6,
-    startingSkills: ['m_mountain_fist', 'm_ground_split_kick', 'm_hunyuan_force'],
+    startingSkills: ['m_mountain_fist', 'm_ground_split_kick'],
     skillPool: MARTIALARTIST_SKILLS,
     resource: { name: '蓄势', key: 'momentum', max: 3, start: 0 },
     streakMultipliers: [{ after: 2, mult: 0.60 }, { after: 3, mult: 0.30 }],

@@ -260,13 +260,21 @@ body {
 .char-preview.swordsman { border-color: rgba(106, 146, 173, 0.4); }
 .char-preview.martial { border-color: rgba(217, 142, 74, 0.4); }
 .char-preview .char-icon {
-  font-family: var(--font-brush);
-  font-size: 34px;
-  line-height: 1;
-  margin-bottom: 6px;
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  background-size: cover;
+  background-position: center 22%;
+  background-color: rgba(0,0,0,0.35);
+  margin: 0 auto 8px;
+  border: 1px solid rgba(201,162,75,0.3);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+  font-size: 0;  /* 隐藏文本，背景图代替 */
+  line-height: 0;
+  text-indent: -9999px;
 }
-.char-preview.swordsman .char-icon { color: var(--azure); }
-.char-preview.martial .char-icon { color: var(--ember); }
+.char-preview.swordsman .char-icon { border-color: rgba(106,146,173,0.5); }
+.char-preview.martial .char-icon { border-color: rgba(217,142,74,0.5); }
 .char-preview .char-name { font-size: 14px; font-weight: 600; letter-spacing: 3px; }
 .char-preview .char-desc { font-size: 11px; color: var(--paper-mute); margin-top: 3px; letter-spacing: 1px; }
 
@@ -316,6 +324,21 @@ body {
   background: radial-gradient(circle at 35% 30%, rgba(236,224,198,0.10), rgba(0,0,0,0.35));
 }
 .char-card.swordsman .char-glyph { color: var(--azure); box-shadow: 0 0 22px rgba(106,146,173,0.25); }
+.char-card.martialArtist .char-glyph { color: #e8b088; box-shadow: 0 0 22px rgba(217,142,74,0.25); }
+
+/* 角色立绘（来自玩家提供的图片） */
+.char-portrait {
+  width: 80px;
+  height: 80px;
+  border-radius: 12px;
+  background-size: cover;
+  background-position: center 20%;
+  border: 1.5px solid rgba(201,162,75,0.45);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  flex: 0 0 auto;
+}
+.char-card.swordsman .char-portrait { border-color: rgba(106,146,173,0.5); box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 18px rgba(106,146,173,0.25); }
+.char-card.martialArtist .char-portrait { border-color: rgba(217,142,74,0.5); box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 18px rgba(217,142,74,0.25); }
 .char-card.martial .char-glyph { color: var(--ember); box-shadow: 0 0 22px rgba(217,142,74,0.25); }
 .char-card h3 { font-family: var(--font-brush); font-size: 26px; font-weight: 400; letter-spacing: 5px; }
 .char-stats { display: flex; gap: 14px; margin-bottom: 8px; }
@@ -332,6 +355,18 @@ body {
   letter-spacing: 1px;
 }
 .tag-more { color: var(--gold); }
+
+.stats-portrait {
+  display: inline-block;
+  vertical-align: middle;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  background-size: cover;
+  background-position: center 22%;
+  border: 1px solid rgba(201,162,75,0.4);
+  margin-right: 8px;
+}
 
 /* ---- Sword Select ---- */
 .sword-select-screen { gap: 14px; align-items: center; }
@@ -619,29 +654,33 @@ body {
 }
 .player-sprite { position: relative; transition: transform 0.12s; }
 .sprite-body {
-  width: 84px; height: 84px;
-  border-radius: 50%;
+  width: 88px; height: 96px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   position: relative;
   border: 1.5px solid var(--border-gold);
   background: radial-gradient(circle at 35% 28%, rgba(236,224,198,0.10), rgba(10,8,6,0.5));
+  background-size: cover;
+  background-position: center 22%;
+  background-repeat: no-repeat;
   animation: idleBreath 3.2s ease-in-out infinite;
+  overflow: hidden;
 }
+.sprite-body .sprite-aura,
+.sprite-body .sprite-glyph {
+  position: absolute;
+}
+/* 角色立绘模式：隐藏 glyph，气场环绕 */
+.sprite-body.has-portrait { background-color: rgba(10,8,6,0.35); }
+.sprite-body.has-portrait .sprite-glyph { display: none; }
 @keyframes idleBreath {
   0%,100% { transform: translateY(0) scale(1); }
   50% { transform: translateY(-3px) scale(1.015); }
 }
-.sprite-glyph {
-  font-family: var(--font-brush);
-  font-size: 46px;
-  line-height: 1;
-}
 .sprite-body.swordsman { box-shadow: 0 0 34px rgba(106,146,173,0.35), inset 0 0 20px rgba(106,146,173,0.12); }
-.sprite-body.swordsman .sprite-glyph { color: #9fc2d8; text-shadow: 0 0 16px rgba(106,146,173,0.8); }
 .sprite-body.martialArtist { box-shadow: 0 0 34px rgba(217,142,74,0.35), inset 0 0 20px rgba(217,142,74,0.12); }
-.sprite-body.martialArtist .sprite-glyph { color: #e8b088; text-shadow: 0 0 16px rgba(217,142,74,0.8); }
 
 /* 角色气场环 */
 .sprite-aura {
