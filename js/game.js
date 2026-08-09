@@ -1,18 +1,18 @@
 // ============================================================
-// 织律 Weaveline - Game Controller
-// 国风水墨版：主状态机、UI 管理、战斗演出播放
+// 织律 Weaveline v1.4 - Game Controller
+// 卡牌战斗重构：手牌选择、能量管理、敌人意图、牌堆系统
 // ============================================================
 
 class GameController {
   constructor() {
-    this.state = 'menu'; // menu | character_select | route_map | battle | reward | shop | rest | game_over
+    this.state = 'menu';
     this.character = null;
-    this.skills = [];
+    this.cards = [];          // Current deck cardIds
     this.equipment = [];
     this.signatureSword = null;
     this.hp = 100;
     this.maxHp = 100;
-    this.supply = 0; // 物资
+    this.supply = 0;
     this.routeMap = null;
     this.currentLayer = 0;
     this.currentNode = null;
@@ -20,25 +20,19 @@ class GameController {
     this.battleResult = null;
     this.seed = Date.now();
     this.rng = new SeededRandom(this.seed);
-    this.speed = 1; // 1x, 2x, 4x
-    this.isAnimating = false;
     this.proficiency = {};
     this.pendingUpgrades = [];
     this.regionCleared = false;
-    // 演出状态
-    this._enemyStatuses = {};      // enemyId -> {status: stacks}
-    this._liveIntentPoints = 0;     // 演出用剑意点数（0-3）
-    this._liveIntentLevel = 0;      // 演出用剑意层数（0-3）
-    this._liveMomentum = 0;         // 演出用蓄势（近似）
+    this.powerBuff = 0;
+    this.currentRegion = 0;
+    // Battle UI state
+    this._targetMode = null;  // null | { cardInstanceId, targetMode }
+    this._battleType = 'normal';
   }
 
-  // ============ INIT ============
-
   async start() {
-    // Init audio on first user interaction
     document.addEventListener('click', () => audio.init(), { once: true });
     document.addEventListener('touchstart', () => audio.init(), { once: true });
-
     this.showMenu();
   }
 
@@ -61,7 +55,7 @@ class GameController {
             <button class="btn btn-primary btn-large" onclick="game.selectCharacter()">入 局</button>
             <button class="btn btn-secondary" onclick="game.showHelp()">玩法说明</button>
           </div>
-          <div class="menu-version">v0.2 国风水墨 · 垂直切片原型</div>
+          <div class="menu-version">v1.4 卡牌重构 · 抽牌/能量/主动打牌</div>
           <div class="menu-characters">
             <div class="char-preview swordsman">
               <div class="char-icon" style="background-image:url('assets/char_swordsman.jpg')"></div>
@@ -84,34 +78,30 @@ class GameController {
     document.getElementById('app').innerHTML = `
       <div class="screen help-screen">
         <div class="panel">
-          <h2>玩法说明</h2>
+          <h2>玩法说明 v1.4</h2>
           <div class="help-content">
             <div class="help-section">
               <h3>核心玩法</h3>
-              <p>《织律》是一款<strong>自动战斗 Roguelite</strong>。战斗中无需操作，角色会按照你构筑的技能池自动战斗。</p>
+              <p>每回合从牌堆<strong>抽5张手牌</strong>，消耗<strong>能量</strong>主动打出技能卡。与《杀戮尖塔》类似的牌堆循环——抽牌堆→手牌→弃牌堆→重洗。</p>
             </div>
             <div class="help-section">
               <h3>战斗系统</h3>
               <ul>
-                <li>每回合从技能池中<strong>按权重随机抽取</strong>一个技能自动释放</li>
-                <li>技能有权重、冷却、自动目标规则</li>
-                <li><strong>剑圣</strong>：剑技命中积累「剑意层数」（最多3层，每层+10%伤害）；3层可释放大招，释放后层数-1</li>
-                <li><strong>武圣</strong>：积累「蓄势」，达到 3 后触发「重式」爆发</li>
+                <li>每回合恢复<strong>3点能量</strong>，抽<strong>5张</strong>牌，手牌上限<strong>10张</strong></li>
+                <li>卡牌费用0-3，选中手牌→选敌人目标→打出</li>
+                <li>弃牌堆在抽牌堆耗尽时重洗回抽牌堆</li>
+                <li>敌人意图在每回合开始时<strong>明牌显示</strong></li>
+                <li><strong>剑圣</strong>：剑技命中+1剑意（0-3），满3点亮大招按钮</li>
+                <li><strong>武圣</strong>：拳/脚命中+1蓄势（0-3），满3后下一拳/脚进入重式×1.60</li>
               </ul>
             </div>
             <div class="help-section">
-              <h3>路线探索</h3>
+              <h3>状态系统</h3>
               <ul>
-                <li>树状路线图，从下往上逐层推进</li>
-                <li>每层选择一个节点前进</li>
-                <li>节点：战斗 · 精英 · 奇遇 · 商栈 · 改造 · 休整 · 遗宝</li>
-              </ul>
-            </div>
-            <div class="help-section">
-              <h3>异常状态</h3>
-              <ul>
-                <li>灼烧：每回合末按层数造成持续伤害</li>
-                <li>破甲：降低目标防御，受击更易受创</li>
+                <li>中毒：持续伤害，无视护盾，独立结算</li>
+                <li>破甲：降低防御</li>
+                <li>虚弱：降低造成伤害</li>
+                <li>易伤：提高受到伤害</li>
               </ul>
             </div>
           </div>
@@ -138,17 +128,18 @@ class GameController {
               <div>
                 <h3>剑圣</h3>
                 <div class="char-stats">
-                  <div class="stat">生命 95</div>
-                  <div class="stat">剑意 0-3 层</div>
-                  <div class="stat">技能槽 6</div>
+                  <div class="stat">生命 68</div>
+                  <div class="stat">剑意 0-3</div>
+                  <div class="stat">起始牌组 10张</div>
                 </div>
               </div>
             </div>
-            <p>灵巧华丽，招式流动，剑气纵横。剑技命中积累剑意层，每层+10%伤害；3层可释放大招。</p>
+            <p>灵巧华丽，招式流动，剑气纵横。打出剑技积攒剑意，满3点亮大招按钮，由你决定何时释放万剑归流。</p>
             <div class="char-skills-preview">
               <span class="skill-tag">流云刺</span>
               <span class="skill-tag">回风斩</span>
-              <span class="skill-tag tag-more">+13</span>
+              <span class="skill-tag">青锋剑气</span>
+              <span class="skill-tag tag-more">+9</span>
             </div>
             <button class="btn btn-primary btn-block">选择剑圣</button>
           </div>
@@ -160,15 +151,16 @@ class GameController {
                 <div class="char-stats">
                   <div class="stat">生命 92</div>
                   <div class="stat">蓄势 0-3</div>
-                  <div class="stat">技能槽 6</div>
+                  <div class="stat">起始牌组 10张</div>
                 </div>
               </div>
             </div>
-            <p>大开大合，以力破巧，拳脚重击。积累蓄势触发重式，内功不结束行动。</p>
+            <p>大开大合，以力破巧，拳脚重击。积累蓄势触发重式，内功越打越强。</p>
             <div class="char-skills-preview">
               <span class="skill-tag">开山拳</span>
               <span class="skill-tag">裂地踢</span>
-              <span class="skill-tag tag-more">+10</span>
+              <span class="skill-tag">金钟劲</span>
+              <span class="skill-tag tag-more">+9</span>
             </div>
             <button class="btn btn-primary btn-block">选择武圣</button>
           </div>
@@ -182,22 +174,27 @@ class GameController {
     audio.playUiClick();
     const charDef = CHARACTERS[charId];
     this.character = charDef;
-    this.skills = [...charDef.startingSkills.map(sid =>
-      charDef.skillPool.find(s => s.id === sid)
-    )];
+    // Build starting deck from card pool
+    this.cards = [];
+    for (const entry of charDef.startingCards) {
+      for (let i = 0; i < entry.count; i++) {
+        this.cards.push(entry.cardId);
+      }
+    }
     this.maxHp = charDef.maxHp;
     this.hp = charDef.maxHp;
     this.supply = 30;
     this.equipment = [];
     this.signatureSword = null;
-    this.powerBuff = 0; // 献祭累计的永久增伤
+    this.powerBuff = 0;
     this.proficiency = {};
-    this.skills.forEach(s => { this.proficiency[s.id] = { xp: 0, level: 1 }; });
+    this.cards.forEach(cid => {
+      if (!this.proficiency[cid]) this.proficiency[cid] = { xp: 0, level: 1 };
+    });
     this.currentRegion = 0;
     this.seed = Date.now();
     this.rng = new SeededRandom(this.seed);
 
-    // If swordsman, show signature sword selection
     if (charId === 'swordsman') {
       this.selectSignatureSword();
     } else {
@@ -213,7 +210,7 @@ class GameController {
         <h2 class="screen-title">择 剑</h2>
         <p class="screen-subtitle">每局只执一把名剑，整局锁定</p>
         <div class="sword-cards">
-          ${SIGNATURE_SWORDS.slice(0, 4).map(sword => `
+          ${SIGNATURE_SWORDS.map(sword => `
             <div class="sword-card" onclick="game.pickSword('${sword.id}')">
               <div class="seal sword-name-seal">${sword.name.charAt(0)}</div>
               <div style="flex:1;min-width:0">
@@ -234,7 +231,7 @@ class GameController {
     this.startRun();
   }
 
-  // ============ RUN START ============
+  // ============ RUN ============
 
   startRun() {
     this.currentLayer = 0;
@@ -243,23 +240,17 @@ class GameController {
     this.showRouteMap();
   }
 
-  // ============ ROUTE MAP ============
-
   showRouteMap() {
     this.state = 'route_map';
     const map = this.routeMap;
     const char = this.character;
 
-    // 清除所有节点的 accessible 标记，然后根据当前位置重新计算
     for (let l = 0; l < map.layers; l++) {
       map.nodes[l].forEach(n => n.accessible = false);
     }
-
     if (this.currentLayer === 0) {
-      // 第 0 层所有节点可选
       map.nodes[0].forEach(n => n.accessible = true);
     } else {
-      // 找到上一层的已访问节点，标记其连接节点为可到达
       const prevVisited = map.nodes[this.currentLayer - 1].find(n => n.visited);
       if (prevVisited && prevVisited.connections) {
         map.nodes[this.currentLayer].forEach(n => {
@@ -278,6 +269,7 @@ class GameController {
           <div class="header-right">
             <div class="resource-display"><span class="res-hp">命</span> ${this.hp}/${this.maxHp}</div>
             <div class="resource-display"><span class="res-supply">物资</span> ${this.supply}</div>
+            <div class="resource-display"><span class="res-deck">牌组</span> ${this.cards.length}张</div>
             <button class="btn btn-secondary btn-sm" onclick="game.showStatsPanel()" style="padding:4px 10px;font-size:13px;">属性</button>
           </div>
         </div>
@@ -286,28 +278,23 @@ class GameController {
         <div class="route-map-container" id="routeMapContainer">
           <div class="route-map" id="routeMap">`;
 
-    // Render from top (boss) to bottom
     for (let layer = map.layers - 1; layer >= 0; layer--) {
       html += `<div class="route-layer" data-layer="${layer}">`;
       html += `<div class="layer-label">${layer + 1}</div>`;
       html += `<div class="layer-nodes">`;
       map.nodes[layer].forEach((node, i) => {
         const info = NODE_TYPE_INFO[node.type] || NODE_TYPE_INFO.battle;
-        const isCurrent = this.currentLayer === layer && node.visited;
-        // 只能选当前层、已标记可到达、且未访问的节点
         const isAccessible = node.accessible && !node.visited && layer === this.currentLayer;
         const isPast = node.visited || layer < this.currentLayer;
         const isFuture = layer > this.currentLayer && !node.accessible;
 
         let nodeClass = 'route-node';
-        if (isCurrent) nodeClass += ' current';
+        if (isPast) nodeClass += ' past';
         else if (isAccessible) nodeClass += ' accessible';
-        else if (isPast) nodeClass += ' past';
         else nodeClass += ' future';
 
         html += `
-          <div class="${nodeClass}" id="rnode_${layer}_${i}"
-               data-node-id="${node.id}"
+          <div class="${nodeClass}" id="rnode_${layer}_${i}" data-node-id="${node.id}"
                style="--node-color:${info.color}"
                onclick="${isAccessible ? `game.selectRouteNode(${layer},${i})` : ''}"
                title="${info.name}">
@@ -318,29 +305,22 @@ class GameController {
       html += `</div></div>`;
     }
 
-    html += `
-          </div>
-        </div>
+    html += `</div></div>
         <div class="route-legend">
           ${Object.entries(NODE_TYPE_INFO).map(([type, info]) =>
             `<span class="legend-item"><span class="legend-glyph" style="color:${info.color}">${info.glyph}</span> ${info.name}</span>`
           ).join('')}
         </div>
-      </div>
-    `;
+      </div>`;
 
     document.getElementById('app').innerHTML = html;
-    // 等布局完成后绘制 SVG 墨线连接
     requestAnimationFrame(() => this._drawRouteConnections());
   }
 
-  /** 以 SVG 贝塞尔曲线绘制节点连线（墨色虚线，走过的高亮） */
   _drawRouteConnections() {
     const container = document.getElementById('routeMapContainer');
     const mapEl = document.getElementById('routeMap');
     if (!container || !mapEl || !this.routeMap) return;
-
-    // 移除旧 SVG
     const old = container.querySelector('.route-svg');
     if (old) old.remove();
 
@@ -354,10 +334,7 @@ class GameController {
       const el = document.getElementById(`rnode_${layer}_${index}`);
       if (!el) return null;
       const r = el.getBoundingClientRect();
-      return {
-        x: r.left - containerRect.left + r.width / 2,
-        y: r.top - containerRect.top + r.height / 2
-      };
+      return { x: r.left - containerRect.left + r.width / 2, y: r.top - containerRect.top + r.height / 2 };
     };
 
     const map = this.routeMap;
@@ -384,126 +361,136 @@ class GameController {
   }
 
   selectRouteNode(layer, index) {
+    try {
     audio.playUiClick();
     const node = this.routeMap.nodes[layer][index];
     node.visited = true;
     this.currentLayer = layer;
     this.currentNode = node;
 
-    // 清除同层其他节点的可到达标记，确保每层只能选一个
     this.routeMap.nodes[layer].forEach((n, i) => {
       if (i !== index) n.accessible = false;
     });
 
     switch (node.type) {
-      case 'battle':
-        this.startBattle('normal');
-        break;
-      case 'elite':
-        this.startBattle('elite');
-        break;
-      case 'boss':
-        this.startBattle('boss');
-        break;
-      case 'shop':
-        this.showShop();
-        break;
-      case 'rest':
-        this.showRest();
-        break;
-      case 'upgrade':
-        this.showUpgrade();
-        break;
-      case 'event':
-        this.showEvent();
-        break;
-      case 'treasure':
-        this.showTreasure();
-        break;
-      default:
-        this.startBattle('normal');
+      case 'battle': this.startBattle('normal'); break;
+      case 'elite': this.startBattle('elite'); break;
+      case 'boss': this.startBattle('boss'); break;
+      case 'shop': this.showShop(); break;
+      case 'rest': this.showRest(); break;
+      case 'upgrade': this.showUpgrade(); break;
+      case 'event': this.showEvent(); break;
+      case 'treasure': this.showTreasure(); break;
+      default: this.startBattle('normal');
     }
 
-    // Mark next layer as accessible
-    if (layer + 1 < this.routeMap.layers) {
-      if (node.connections) {
-        this.routeMap.nodes[layer + 1].forEach(n => {
-          if (node.connections.includes(n.id)) n.accessible = true;
-        });
-      }
+    if (layer + 1 < this.routeMap.layers && node.connections) {
+      this.routeMap.nodes[layer + 1].forEach(n => {
+        if (node.connections.includes(n.id)) n.accessible = true;
+      });
+    }
+    } catch(e) {
+      console.error('[selectRouteNode] ERROR:', e.message, e.stack);
+      document.getElementById('app').innerHTML = '<div style="padding:20px;color:#e0604a"><h2>路由错误</h2><pre>' + e.message + '</pre></div>';
     }
   }
 
-  // ============ BATTLE ============
+  // ============ BATTLE v1.4 - Card-based ============
 
   startBattle(type) {
+    try {
     const encounterRng = new SeededRandom(this.seed + this.currentLayer * 1000 + this.currentRegion * 10000);
     const encounter = generateEncounter(this.currentLayer, encounterRng, this.currentRegion);
-    // generateEncounter 已按章节 + 层数正确生成所有敌人（含 Boss），不再覆盖
 
     const setup = {
       character: this.character,
-      skills: this.skills,
+      cards: this.cards,
       equipment: this.equipment,
       signatureSword: this.signatureSword,
       powerBuff: this.powerBuff,
       currentHp: this.hp,
-      enemies: encounter.enemies.map(e => ({ ...e }))
+      enemies: encounter.enemies,
+      proficiency: { ...this.proficiency }
     };
 
-    this.battleCore = new BattleCore(setup, new SeededRandom(this.seed));
+    this.battleCore = new BattleCore(setup, this.seed + this.currentLayer * 777);
     this.state = 'battle';
-    this._enemyStatuses = {};
-    this._liveIntentPoints = 0;
-    this._liveIntentLevel = 0;
-    this._liveMomentum = 0;
-    this._livePlayerHp = this.hp;
-    this._liveEnemyHp = encounter.enemies.map(e => e.maxHp);
     this._battleType = type;
+    this._targetMode = null;
 
     const typeName = type === 'boss' ? '首领战' : type === 'elite' ? '精英战' : '遭遇战';
     audio.playBgm(type === 'boss' ? 'boss' : type === 'elite' ? 'elite' : 'battle');
 
-    // 手动模式：初始化战斗但不自动执行
-    this.battleCore.startManual();
-    this.battleCore.beginRound();
-    this._renderManualBattleUI(type, encounter);
+    this.battleCore.begin();
+    this._renderBattleUI();
+    } catch(e) {
+      console.error('[startBattle] ERROR:', e.message, e.stack);
+      document.getElementById('app').innerHTML = '<div style="padding:20px;color:#e0604a;background:#1a1008;border:1px solid #e0604a;border-radius:8px;margin:20px"><h2>战斗系统错误</h2><pre style="white-space:pre-wrap;word-break:break-all">' + e.message + '</pre><button onclick="location.reload()" style="margin-top:12px;padding:8px 16px">刷新重试</button></div>';
+    }
   }
 
-  // ============ 手动战斗 UI ============
-
-  _renderManualBattleUI(type, encounter) {
+  _renderBattleUI() {
+    const core = this.battleCore;
+    const state = core.getState();
     const char = this.character;
-    const enemies = encounter.enemies;
-    const sigSword = this.signatureSword;
-    const typeName = type === 'boss' ? '首领战' : type === 'elite' ? '精英战' : '遭遇战';
-    const resMax = char.resource.max;
 
     document.getElementById('app').innerHTML = `
       <div class="screen battle-screen">
         <div class="battle-bg" style="background-image:url('assets/bg_battle_guo_xi.jpg')"></div>
-        <div class="battle-header">
-          <div class="battle-type ${type}">${typeName}</div>
+
+        <!-- Enemy intents bar -->
+        <div class="enemy-intents-bar" id="intentsBar">
+          ${state.enemies.map(e => {
+            const plan = state.enemyPlans[e.id];
+            let intentHtml = '???';
+            if (plan) {
+              intentHtml = `<span class="intent-icon intent-${plan.intent}">${plan.intent === 'attack' ? '⚔' : plan.intent === 'shield' ? '🛡' : plan.intent === 'buff' ? '⬆' : '?'}</span>`;
+              if (plan.previewText) intentHtml += ` <span class="intent-text">${plan.previewText}</span>`;
+            }
+            return `
+              <div class="intent-enemy ${e.alive ? '' : 'dead'}" id="intent_${e.id}">
+                <div class="intent-enemy-name">${e.name}</div>
+                <div class="intent-detail">${intentHtml}</div>
+              </div>`;
+          }).join('')}
         </div>
 
+        <!-- Arena -->
         <div class="battle-arena" id="battleArena">
-          <!-- Enemy side（上方） -->
           <div class="enemy-area" id="enemyArea">
-            ${enemies.map((e, i) => `
-              <div class="enemy-unit ${e.type || 'normal'}" id="enemy_${i}">
+            ${state.enemies.map((e, i) => `
+              <div class="enemy-unit ${e.type || 'normal'} ${e.alive ? '' : 'dead'}"
+                   id="enemy_${e.id}" onclick="${this._targetMode ? `game._selectTarget('${e.id}')` : ''}"
+                   style="${this._targetMode && e.alive ? 'cursor:pointer;outline:2px solid var(--gold);' : ''}">
                 <div class="status-row" id="status_${i}"></div>
                 <div class="enemy-sprite">
-                  <div class="sprite-enemy" style="--enemy-color:${e.color || '#b8a684'}">${e.glyph || e.name.charAt(0)}</div>
+                  <div class="sprite-enemy" style="--enemy-color:${e.color || '#b8a684'}">${e.definition?.glyph || e.name.charAt(0)}</div>
                 </div>
                 <div class="enemy-name">${e.name}</div>
                 <div class="hp-bar-container small">
-                  <div class="hp-bar enemy-hp">
-                    <div class="hp-fill" style="width:100%"></div>
-                  </div>
-                  <span class="hp-text">${e.maxHp}/${e.maxHp}</span>
+                  <div class="hp-bar enemy-hp"><div class="hp-fill" style="width:${e.alive ? (e.hp/e.maxHp*100) : 0}%"></div></div>
+                  <span class="hp-text">${e.hp}/${e.maxHp}</span>
                 </div>
+                ${e.shield > 0 ? `<div class="shield-indicator">🛡${e.shield}</div>` : ''}
               </div>
             `).join('')}
+          </div>
+
+          <!-- Player -->
+          <div class="player-area">
+            <div class="player-sprite" id="playerSprite">
+              <div class="sprite-body ${char.id} has-portrait" style="background-image:url('${char.portrait}')">
+                <div class="sprite-aura"></div>
+                <span class="sprite-glyph">${char.glyph}</span>
+              </div>
+              ${state.player.shield > 0 ? `<div class="player-shield">🛡${state.player.shield}</div>` : ''}
+            </div>
+            <div class="hp-bar-container">
+              <div class="hp-bar player-hp" id="playerHpBar">
+                <div class="hp-fill" style="width:${(state.player.hp/state.player.maxHp*100)}%"></div>
+              </div>
+              <span class="hp-text" id="playerHpText">${state.player.hp}/${state.player.maxHp}</span>
+            </div>
           </div>
 
           <!-- Battle log -->
@@ -511,664 +498,434 @@ class GameController {
             <div class="log-content" id="logContent"></div>
           </div>
 
-          <!-- Player side（下方） -->
-          <div class="player-area">
-            <div class="player-sprite" id="playerSprite">
-              <div class="sprite-body ${char.id} has-portrait" style="background-image:url('${char.portrait}')">
-                <div class="sprite-aura"></div>
-                <span class="sprite-glyph">${char.glyph}</span>
-              </div>
-              <div class="player-name">${char.name}</div>
-            </div>
-            <div class="hp-bar-container">
-              <div class="hp-bar player-hp" id="playerHpBar">
-                <div class="hp-fill" style="width:100%"></div>
-              </div>
-              <span class="hp-text" id="playerHpText">${this.hp}/${this.maxHp}</span>
-            </div>
-            <div class="resource-indicator" id="resourceIndicator">
-              <span>${char.resource.name}
-                ${char.id === 'swordsman' ?
-                `<span class="res-val intent-level" id="${char.resource.key}">lv.0</span>&nbsp;&nbsp;&nbsp;<span class="res-val res-sub" id="${char.resource.key}Points">0/3</span>` :
-                `<span class="res-val" id="${char.resource.key}">0</span>/${resMax}`
-                }
-              </span>
-              ${sigSword ? `<span style="color:var(--gold)">名剑 · ${sigSword.name}</span>` : ''}
-            </div>
-            <div class="intent-orbs" id="intentOrbs">
-              ${Array.from({length: resMax}, () =>
-                `<span class="intent-orb ${char.id === 'martialArtist' ? 'momentum' : ''}"></span>`
-              ).join('')}
-            </div>
-            ${char.id === 'swordsman' ?
-              `<div class="intent-level-display" id="intentLevelDisplay">
-                <span class="level-step" id="lvlStep1">I</span>
-                <span class="level-step" id="lvlStep2">II</span>
-                <span class="level-step" id="lvlStep3">III</span>
-                <span class="intent-bonus">+0%</span>
-              </div>` : ''
-            }
-          </div>
-
           <!-- FX layer -->
           <div class="fx-layer" id="fxLayer"></div>
         </div>
 
-        <!-- 手牌区 -->
-        <div class="battle-card-area" id="cardArea">
-          <div class="card-hand" id="cardHand"></div>
-          <div class="card-ultimate-area" id="ultimateArea"></div>
+        <!-- ENERGY + PILES + RESOURCE -->
+        <div class="battle-hud">
+          <div class="hud-left">
+            <div class="energy-display" id="energyDisplay">
+              <span class="energy-orb">⚡</span>
+              <span class="energy-val" id="energyVal">${state.energy}</span>/<span class="energy-max">${state.maxEnergy}</span>
+            </div>
+            <div class="pile-info">
+              <button class="pile-btn" onclick="game._showPileInfo()" title="抽牌堆"><span class="pile-icon">📦</span>${state.drawPileCount}</button>
+              <button class="pile-btn" onclick="game._showPileInfo()" title="弃牌堆"><span class="pile-icon">🗑</span>${state.discardPileCount}</button>
+              <button class="pile-btn" onclick="game._showPileInfo()" title="消耗堆"><span class="pile-icon">💨</span>${state.exhaustPileCount}</button>
+            </div>
+            ${this.signatureSword ? `<div class="sword-display">${this.signatureSword.name}</div>` : ''}
+          </div>
+          <div class="hud-center">
+            ${char.id === 'swordsman' ? `
+            <div class="resource-display-v2" id="swordIntentDisplay">
+              <span class="resource-label">剑意</span>
+              ${[0,1,2,3].map(i => `<span class="intent-dot ${i < state.swordIntent ? 'filled' : ''}"></span>`).join('')}
+            </div>` : `
+            <div class="resource-display-v2" id="momentumDisplay">
+              <span class="resource-label">蓄势</span>
+              ${[0,1,2,3].map(i => `<span class="momentum-dot ${i < state.momentum ? 'filled' : ''}"></span>`).join('')}
+            </div>`}
+          </div>
+          <div class="hud-right">
+            <button class="btn btn-endturn" id="endTurnBtn" onclick="game._endTurn()">结束回合</button>
+          </div>
         </div>
 
-        <div class="battle-overlay" id="battleOverlay" style="display:none"></div>
+        <!-- HAND -->
+        <div class="card-hand-area" id="cardHandArea">
+          <div class="card-hand-scroll" id="cardHandScroll">
+            ${this._renderHandCards()}
+          </div>
+        </div>
+
+        <!-- Ultimate button (floating) -->
+        ${char.id === 'swordsman' ? `
+        <div class="ultimate-button-area">
+          <button class="btn-ultimate ${state.swordIntent >= 3 ? 'ready' : 'locked'}"
+                  id="ultimateBtn"
+                  onclick="game._castUltimate()"
+                  ${state.swordIntent < 3 ? 'disabled' : ''}>
+            ${state.swordIntent >= 3 ? '⚔️ 万剑归流' : `剑意 ${state.swordIntent}/3`}
+          </button>
+        </div>` : ''}
       </div>
     `;
 
-    // 初始化手牌
-    this._drawHand();
-    // 更新 HUD
-    this._refreshManualHud();
+    this._refreshBattleHud();
   }
 
-  /** 抽卡：从可用技能中取 4 张 */
-  _drawHand() {
-    const hand = this.battleCore.drawHand(4);
-    if (hand.length === 0) {
-      // 全部冷却中，普攻
-      this._handleCardClick(null);
-      return;
-    }
-    this._currentHand = hand;
-    this._renderCardHand(hand);
-  }
-
-  /** 渲染手牌 */
-  _renderCardHand(hand) {
-    const handEl = document.getElementById('cardHand');
-    if (!handEl) return;
-    const ultEl = document.getElementById('ultimateArea');
-    const canUlt = this.battleCore.canUltimate();
-
-    handEl.innerHTML = hand.map(s => `
-      <div class="skill-card ${s.tag.includes('绝技') ? 'card-rare' : s.tag === '剑气' ? 'card-qi' : ''}"
-           onclick="game._handleCardClick('${s.id}')" style="--card-glow:${this.character.color}">
-        <div class="card-tag">${s.tag}</div>
-        <div class="card-name">${s.name}</div>
-        <div class="card-desc">${s.desc}</div>
-      </div>
-    `).join('');
-
-    // 大招按钮
-    ultEl.innerHTML = canUlt ?
-      `<div class="skill-card card-ultimate" onclick="game._handleUltimateClick()">
-        <div class="card-tag">${this.signatureSword.ultimate.tag}</div>
-        <div class="card-name">⚔️ ${this.signatureSword.ultimate.name}</div>
-        <div class="card-desc">${this.signatureSword.ultimate.desc}</div>
-      </div>` : '';
-  }
-
-  /** 点击手牌 */
-  _handleCardClick(skillId) {
-    if (this.state !== 'battle') return;
-    audio.playUiClick();
-
-    let skill;
-    if (skillId) {
-      skill = this._currentHand.find(s => s.id === skillId);
-      if (!skill) return;
-    }
-
-    // 执行技能
+  _renderHandCards() {
     const core = this.battleCore;
-    let result;
-    if (skill) {
-      result = core.playSkill(skill);
-    } else {
-      // 无牌可用：普攻（手动触发）
-      core._basicAttack();
-      core._checkEndConditions();
-      result = core.isBattleOver();
-    }
+    const handCards = core.getHandCards();
 
-    // 快速更新 HUD
-    this._refreshManualHud();
+    if (handCards.length === 0) return '<div class="no-cards-msg">手牌已空，请结束回合</div>';
 
-    // 检查战斗结束
-    if (result.isOver) {
-      this._finishManualBattle(result);
-      return;
-    }
+    return handCards.map(ci => {
+      const canPlay = core.canPlayCard(ci.instanceId);
+      const costClass = ci.isCostDiscounted ? 'cost-discounted' : '';
+      const typeClass = ci.cardType === 'attack' ? 'card-attack' :
+                        ci.cardType === 'power' ? 'card-power' :
+                        ci.cardType === 'technique' ? 'card-technique' : 'card-utility';
+      const rarityClass = ci.energyCost >= 3 ? 'card-epic' : ci.pileKeywords.includes('exhaust') ? 'card-rare' : '';
 
-    // 敌人回合
-    setTimeout(() => {
-      if (this.state !== 'battle') return;
-      core.playEnemies();
-      this._refreshManualHud();
-
-      if (core.isBattleOver().isOver) {
-        this._finishManualBattle(core.isBattleOver());
-        return;
-      }
-
-      // 回合结束 + 新回合开始
-      core.endRound();
-      core.beginRound();
-      this._refreshManualHud();
-      this._drawHand();
-    }, 400);
-  }
-
-  /** 大招点击 */
-  _handleUltimateClick() {
-    if (this.state !== 'battle') return;
-    audio.playUiClick();
-    const core = this.battleCore;
-    const result = core.playUltimate();
-    this._refreshManualHud();
-
-    if (!result || result.isOver) {
-      this._finishManualBattle(result || core.isBattleOver());
-      return;
-    }
-
-    // 敌人回合
-    setTimeout(() => {
-      if (this.state !== 'battle') return;
-      core.playEnemies();
-      this._refreshManualHud();
-
-      if (core.isBattleOver().isOver) {
-        this._finishManualBattle(core.isBattleOver());
-        return;
-      }
-
-      core.endRound();
-      core.beginRound();
-      this._refreshManualHud();
-      this._drawHand();
-    }, 400);
-  }
-
-  /** 刷新手动战斗 HUD */
-  _refreshManualHud() {
-    const core = this.battleCore;
-    const state = core.getBattleState();
-
-    // Player HP
-    const playerHpBar = document.getElementById('playerHpBar');
-    if (playerHpBar) {
-      const fill = playerHpBar.querySelector('.hp-fill');
-      if (fill) fill.style.width = `${Math.max(0, (state.player.hp / state.player.maxHp) * 100)}%`;
-      const text = document.getElementById('playerHpText');
-      if (text) text.textContent = `${state.player.hp}/${state.player.maxHp}`;
-    }
-
-    // Enemy HP
-    state.enemies.forEach((enemy, i) => {
-      const el = document.getElementById(`enemy_${i}`);
-      if (el) {
-        const bar = el.querySelector('.hp-fill');
-        if (bar) bar.style.width = `${Math.max(0, (enemy.hp / enemy.maxHp) * 100)}%`;
-        const text = el.querySelector('.hp-text');
-        if (text) text.textContent = `${enemy.hp}/${enemy.maxHp}`;
-        if (enemy.hp <= 0 && !el.classList.contains('dead')) {
-          el.classList.add('dead');
-        }
-      }
-    });
-
-    // 剑意 / 蓄势
-    this._liveIntentPoints = state.swordIntent;
-    this._liveIntentLevel = state.swordIntentLevel;
-    this._liveMomentum = state.momentum;
-    this._updateOrbs();
-
-    // 战斗日志
-    const logEl = document.getElementById('logContent');
-    if (logEl) {
-      const recent = state.log.slice(-6);
-      logEl.innerHTML = recent.map(l => `<div class="log-line">${l.replace(/^\[R\d+\] /, '')}</div>`).join('');
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-  }
-
-  /** 手动战斗结束 */
-  _finishManualBattle(result) {
-    this.battleResult = {
-      player: result.player,
-      enemies: result.enemies,
-      victory: result.victory,
-      defeat: result.defeat,
-      proficiency: result.proficiency,
-      pendingUpgrades: result.pendingUpgrades || [],
-      log: result.log || [],
-      events: result.events || [],
-      rounds: result.rounds || this.battleCore.round
-    };
-    this._finishBattle();
-  }
-
-  _renderBattleUI(type, encounter) {
-    const char = this.character;
-    const enemies = encounter.enemies;
-    const sigSword = this.signatureSword;
-    const typeName = type === 'boss' ? '首领战' : type === 'elite' ? '精英战' : '遭遇战';
-    const resMax = char.resource.max;
-
-    document.getElementById('app').innerHTML = `
-      <div class="screen battle-screen">
-        <div class="battle-bg" style="background-image:url('assets/bg_battle_guo_xi.jpg')"></div>
-        <div class="battle-header">
-          <div class="battle-type ${type}">${typeName}</div>
-          <div class="battle-speed">
-            <button class="speed-btn ${this.battleSpeed === 1 ? 'active' : ''}" onclick="game.setSpeed(1)">1×</button>
-            <button class="speed-btn ${this.battleSpeed === 2 ? 'active' : ''}" onclick="game.setSpeed(2)">2×</button>
-            <button class="speed-btn ${this.battleSpeed === 4 ? 'active' : ''}" onclick="game.setSpeed(4)">4×</button>
-            <button class="speed-btn skip" onclick="game.skipBattle()">略过</button>
+      return `
+        <div class="battle-card ${typeClass} ${rarityClass} ${canPlay ? '' : 'card-locked'} ${this._targetMode?.cardInstanceId === ci.instanceId ? 'card-selected' : ''}"
+             id="bcard_${ci.instanceId}"
+             onclick="game._clickCard('${ci.instanceId}')">
+          <div class="bcard-cost ${costClass}">${ci.energyCost}${ci.isCostDiscounted ? '<span class="cost-arrow">↓</span>' : ''}</div>
+          <div class="bcard-tags">
+            ${ci.tags.map(t => `<span class="bcard-tag">${t}</span>`).join('')}
+            ${ci.pileKeywords.map(k => `<span class="bcard-keyword">${k === 'retain' ? '保留' : k === 'exhaust' ? '消耗' : k === 'innate' ? '起手' : k}</span>`).join('')}
           </div>
-        </div>
-
-        <div class="battle-arena" id="battleArena">
-          <!-- Enemy side（上方） -->
-          <div class="enemy-area" id="enemyArea">
-            ${enemies.map((e, i) => `
-              <div class="enemy-unit ${e.type}" id="enemy_${i}">
-                <div class="status-row" id="status_${i}"></div>
-                <div class="enemy-sprite">
-                  <div class="sprite-enemy" style="--enemy-color:${e.color || '#b8a684'}">${e.glyph || e.name.charAt(0)}</div>
-                </div>
-                <div class="enemy-name">${e.name}</div>
-                <div class="hp-bar-container small">
-                  <div class="hp-bar enemy-hp">
-                    <div class="hp-fill" style="width:100%"></div>
-                  </div>
-                  <span class="hp-text">${e.maxHp}/${e.maxHp}</span>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-
-          <!-- Battle log -->
-          <div class="battle-log" id="battleLog">
-            <div class="log-content"></div>
-          </div>
-
-          <!-- Player side（下方） -->
-          <div class="player-area">
-            <div class="player-sprite" id="playerSprite">
-              <div class="sprite-body ${char.id} has-portrait" style="background-image:url('${char.portrait}')">
-                <div class="sprite-aura"></div>
-                <span class="sprite-glyph">${char.glyph}</span>
-              </div>
-              <div class="player-name">${char.name}</div>
-            </div>
-            <div class="hp-bar-container">
-              <div class="hp-bar player-hp" id="playerHpBar">
-                <div class="hp-fill" style="width:100%"></div>
-              </div>
-              <span class="hp-text" id="playerHpText">${this._livePlayerHp}/${this.maxHp}</span>
-            </div>
-            <div class="resource-indicator">
-              <span>${char.resource.name}
-                ${char.id === 'swordsman' ?
-                `<span class="res-val intent-level" id="${char.resource.key}">lv.0</span>&nbsp;&nbsp;&nbsp;<span class="res-val res-sub" id="${char.resource.key}Points">0/3</span>` :
-                `<span class="res-val" id="${char.resource.key}">0</span>/${resMax}`
-                }
-              </span>
-              ${sigSword ? `<span style="color:var(--gold)">名剑 · ${sigSword.name}</span>` : ''}
-            </div>
-            <div class="intent-orbs" id="intentOrbs">
-              ${Array.from({length: resMax}, () =>
-                `<span class="intent-orb ${char.id === 'martialArtist' ? 'momentum' : ''}"></span>`
-              ).join('')}
-            </div>
-            ${char.id === 'swordsman' ?
-              `<div class="intent-level-display" id="intentLevelDisplay">
-                <span class="level-step" id="lvlStep1">I</span>
-                <span class="level-step" id="lvlStep2">II</span>
-                <span class="level-step" id="lvlStep3">III</span>
-                <span class="intent-bonus">+0%</span>
-              </div>` : ''
-            }
-          </div>
-
-          <!-- FX layer -->
-          <div class="fx-layer" id="fxLayer"></div>
-        </div>
-
-        <div class="battle-footer">
-          <div class="battle-skills-preview">
-            ${this.skills.map((s, i) => `
-              <div class="skill-mini" id="skillChip_${s.id}" title="${s.desc}">
-                <span class="skill-mini-icon">${s.tag.charAt(0)}</span>
-                <span class="skill-mini-name">${s.name}</span>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-
-        <div class="battle-overlay" id="battleOverlay" style="display:none"></div>
-      </div>
-    `;
-  }
-
-  // ============ 演出：事件播放 ============
-
-  /** 不同事件的基础停留时长（毫秒，1× 速度下） */
-  _eventDelay(event) {
-    const p = event.data?.present;
-    switch (event.type) {
-      case 'skill_cast': return event.data.chained ? 620 : 950;
-      case 'damage': {
-        if (!p) return 320;
-        if (p.preset === 'execute') return 780;
-        if (p.preset === 'heavy' || p.isHeavy) return 560;
-        if (p.multiHit) return 300;
-        return 380;
-      }
-      case 'enemy_action': return 700;
-      case 'execute': return 1500;
-      case 'status_applied': return 150;
-      case 'victory': case 'defeat': return 400;
-      default: return 120;
-    }
-  }
-
-  /** 战斗日志去 emoji、状态英文转中文，保持水墨界面纯粹 */
-  _cleanLog(l) {
-    return l
-      .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{2190}-\u{21FF}]/gu, '')
-      .replace(/\bburn\b/g, '燃烧')
-      .replace(/\barmorBreak\b/g, '破甲')
-      .replace(/\batkUp\b/g, '攻击强化')
-      .replace(/\s{2,}/g, ' ').trim();
-  }
-
-  _playBattleEvents() {
-    if (this.state !== 'battle') return;
-    if (this.battleEventIndex >= this.battleResult.events.length) {
-      this._finishBattle();
-      return;
-    }
-
-    const event = this.battleResult.events[this.battleEventIndex++];
-    const delay = this._eventDelay(event) / this.battleSpeed;
-
-    // Handle different event types visually
-    switch (event.type) {
-      case 'skill_cast':
-        this._showSkillCast(event.data);
-        break;
-      case 'damage':
-        this._showDamage(event.data);
-        break;
-      case 'enemy_action':
-        this._showEnemyAction(event.data);
-        break;
-      case 'execute':
-        this._showExecute(event.data);
-        break;
-      case 'status_applied':
-        this._applyStatusChip(event.data);
-        break;
-      default:
-        break;
-    }
-
-    // Update battle log
-    if (this.battleResult.log && this.battleEventIndex < this.battleResult.log.length) {
-      const logEl = document.getElementById('battleLog');
-      if (logEl) {
-        const content = logEl.querySelector('.log-content');
-        if (content) {
-          content.innerHTML = this.battleResult.log
-            .slice(Math.max(0, this.battleEventIndex - 8), this.battleEventIndex + 1)
-            .map(l => `<div class="log-line">${this._cleanLog(l)}</div>`).join('');
-          content.scrollTop = content.scrollHeight;
-        }
-      }
-    }
-
-    // Update HP bars
-    this._updateHpBars();
-
-    this._playTimer = setTimeout(() => this._playBattleEvents(), delay);
-  }
-
-  // ---------- 技能横幅 ----------
-  _showSkillCast(data) {
-    const skill = data.skill;
-    const overlay = document.getElementById('battleOverlay');
-    const isUltimate = skill.tag.includes('绝技') || skill.tag.includes('大招');
-
-    // 高亮当前技能槽
-    document.querySelectorAll('.skill-mini').forEach(el => el.classList.remove('active-cast'));
-    const chip = document.getElementById(`skillChip_${skill.id}`);
-    if (chip) chip.classList.add('active-cast');
-
-    // 演出用资源近似推进
-    // 剑技：命中后剑意点数 +1（满 3 自动升 1 层、清空点数）
-    if (skill.category === 'sword_technique') {
-      if (skill.onHit?.swordIntent) {
-        this._liveIntentPoints = Math.min(3, this._liveIntentPoints + 1);
-        if (this._liveIntentPoints >= 3 && this._liveIntentLevel < 3) {
-          this._liveIntentLevel++;
-          this._liveIntentPoints = 0;
-        }
-      }
-    }
-    // 剑气：不增减（已不再消耗剑意）
-    // 大招：释放后层数 -1
-    if (skill.category === 'sword_ultimate') {
-      this._liveIntentLevel = Math.max(0, this._liveIntentLevel - 1);
-    }
-    if (skill.category === 'fist' || skill.category === 'kick' || skill.category === 'inner_power') {
-      this._liveMomentum = Math.min(3, this._liveMomentum + 1);
-    }
-    this._updateOrbs();
-
-    if (overlay) {
-      overlay.style.display = 'flex';
-      overlay.innerHTML = `
-        <div class="cast-banner" id="castBanner">
-          <div class="cast-banner-tag ${isUltimate ? 'ultimate' : ''}">${data.chained ? '内功追加 · ' : ''}${skill.tag}</div>
-          <div class="cast-banner-name">${skill.name}</div>
-          <div class="cast-banner-sub">${data.chained ? '蓄势而发' : `出手权重 ${data.weight?.toFixed(0) || '—'}${data.streak > 1 ? ` · 连出 ${data.streak}` : ''}`}</div>
+          <div class="bcard-name">${ci.name}</div>
+          <div class="bcard-desc">${ci.desc || ''}</div>
         </div>
       `;
-      const hideDelay = (data.chained ? 560 : 880) / this.battleSpeed;
-      setTimeout(() => {
-        const banner = document.getElementById('castBanner');
-        if (banner) {
-          banner.classList.add('out');
-          setTimeout(() => {
-            if (overlay.contains(banner)) {
-              overlay.style.display = 'none';
-              overlay.innerHTML = '';
-            }
-          }, 240 / this.battleSpeed);
-        }
-      }, hideDelay);
-    }
-
-    // 玩家前冲
-    const playerSprite = document.getElementById('playerSprite');
-    if (playerSprite && skill.category !== 'inner_power') {
-      playerSprite.classList.remove('attack-lunge');
-      void playerSprite.offsetWidth;
-      playerSprite.classList.add('attack-lunge');
-    }
-
-    audio.playSfx(skill.castSfx || 'skill_select');
+    }).join('');
   }
 
-  // ---------- 伤害演出 ----------
-  _showDamage(data) {
-    // 敌方普攻直接命中玩家（走 damage 事件而非 enemy_action）
-    if (data.targetId === 'player') {
-      if (typeof data.hpRemaining === 'number') this._livePlayerHp = Math.max(0, data.hpRemaining);
-      const playerSprite = document.getElementById('playerSprite');
-      if (playerSprite) {
-        playerSprite.classList.remove('hit-flash', 'player-hit-recoil');
-        void playerSprite.offsetWidth;
-        playerSprite.classList.add('hit-flash', 'player-hit-recoil');
-        setTimeout(() => playerSprite.classList.remove('hit-flash', 'player-hit-recoil'), 260);
+  _clickCard(cardInstanceId) {
+    if (this.state !== 'battle') return;
+    audio.playSfx('card_select');
 
-        const popup = document.createElement('div');
-        popup.className = 'dmg-popup enemy-dmg';
-        popup.textContent = `-${data.amount}`;
-        playerSprite.appendChild(popup);
-        setTimeout(() => popup.remove(), 950);
-      }
+    // If already in target mode, cancel
+    if (this._targetMode && this._targetMode.cardInstanceId === cardInstanceId) {
+      this._targetMode = null;
+      this._reRenderHand();
+      return;
+    }
+
+    const core = this.battleCore;
+    if (!core.canPlayCard(cardInstanceId)) {
       this._shake('light');
       return;
     }
 
-    // 更新敌方实时血量
-    const targetIdx = parseInt(String(data.targetId).replace('enemy_', ''), 10);
-    if (!isNaN(targetIdx) && typeof data.hpRemaining === 'number') {
-      this._liveEnemyHp[targetIdx] = Math.max(0, data.hpRemaining);
+    const info = core.getCardInfo(cardInstanceId);
+    if (!info) return;
+
+    // Check if target selection needed
+    if (info.targetMode === 'enemy_single') {
+      this._targetMode = { cardInstanceId, targetMode: 'enemy_single' };
+      this._renderBattleUI();
+      // Highlight enemies
+      const aliveEnemyIds = core.getAliveEnemyIds();
+      aliveEnemyIds.forEach(eid => {
+        const el = document.getElementById(`enemy_${eid}`);
+        if (el) el.classList.add('targetable');
+      });
+    } else {
+      // No target needed, play immediately
+      this._playCard(cardInstanceId, []);
     }
-
-    const enemyEl = document.getElementById(data.targetId);
-    const p = data.present || {};
-    const preset = p.preset || 'standard';
-    const category = p.category || 'basic';
-
-    if (enemyEl) {
-      // 受击闪白 + 后退
-      enemyEl.classList.remove('hit-flash', 'hit-recoil');
-      void enemyEl.offsetWidth;
-      enemyEl.classList.add('hit-flash', 'hit-recoil');
-      setTimeout(() => enemyEl.classList.remove('hit-flash', 'hit-recoil'), 260);
-
-      // 伤害数字（书法字）
-      const popup = document.createElement('div');
-      popup.className = 'dmg-popup';
-      popup.textContent = `-${data.amount}`;
-      if (data.tags?.includes('dot') || data.tags?.includes('burn')) popup.classList.add('dot');
-      if (data.tags?.includes('crit') || p.isHeavy) popup.classList.add('crit');
-      if (data.tags?.includes('execute') || preset === 'execute') popup.classList.add('execute');
-      enemyEl.appendChild(popup);
-      setTimeout(() => popup.remove(), 950);
-    }
-
-    // 类别专属特效
-    if (enemyEl) {
-      if (category === 'sword_technique') {
-        this._spawnSlash(enemyEl, p.isBloom ? '#ecd394' : '#cfe8f5');
-      } else if (category === 'sword_qi') {
-        this._spawnQiWave(enemyEl, p.isBloom);
-        this._spawnSlash(enemyEl, p.isBloom ? '#ecd394' : '#a8d8e8');
-      } else if (category === 'fist') {
-        this._spawnImpact(enemyEl, '#e8b088');
-        this._spawnParticles(enemyEl, '#d98e4a', p.isHeavy ? 10 : 6);
-      } else if (category === 'kick') {
-        this._spawnImpact(enemyEl, '#e0604a');
-        this._spawnParticles(enemyEl, '#e0604a', p.isHeavy ? 10 : 6);
-      } else {
-        this._spawnParticles(enemyEl, '#cbbc9c', 4);
-      }
-      if (p.isBloom) this._spawnParticles(enemyEl, '#ecd394', 8);
-    }
-
-    // 震屏按打击档位
-    const shakeLevel = preset === 'execute' ? 'execute'
-      : (preset === 'heavy' || p.isHeavy) ? 'heavy'
-      : preset === 'light' ? 'light' : 'standard';
-    this._shake(shakeLevel);
-
-    // 重击/处决白闪帧
-    if (preset === 'heavy' || preset === 'execute' || p.isHeavy) {
-      this._flashFrame();
-    }
-
-    // 命中音
-    audio.playSfx(p.impactSfx || 'hit');
   }
 
-  // ---------- 敌方行动 ----------
-  _showEnemyAction(data) {
-    const enemyEl = data.enemyId ? document.getElementById(data.enemyId) : null;
-    const playerSprite = document.getElementById('playerSprite');
+  _selectTarget(enemyId) {
+    if (!this._targetMode) return;
+    const cardInstanceId = this._targetMode.cardInstanceId;
+    this._targetMode = null;
+    this._playCard(cardInstanceId, [enemyId]);
+  }
 
-    // 技能伤害扣减实时血量（敌方技能不走 damage 事件）
-    if (typeof data.damage === 'number') {
-      this._livePlayerHp = Math.max(0, this._livePlayerHp - data.damage);
+  _playCard(cardInstanceId, targetIds) {
+    const core = this.battleCore;
+
+    // Snapshot enemy HPs before play
+    const hpBefore = {};
+    core.enemies.forEach(e => { hpBefore[e.id] = e.hp; });
+
+    // Get card info for banner
+    const cardInfo = core.getCardInfo(cardInstanceId);
+
+    const result = core.playCard(cardInstanceId, targetIds);
+
+    if (!result.accepted) {
+      console.warn('Card rejected:', result.reason);
+      this._reRenderHand();
+      return;
     }
 
-    // 敌人前冲
+    // --- Animate ---
+    if (cardInfo) {
+      this._showCastBanner(cardInfo.name, cardInfo.tags[0] || '', false);
+      this._animatePlayerAttack();
+    }
+
+    // Animate damage on enemies
+    core.enemies.forEach(e => {
+      const before = hpBefore[e.id] || 0;
+      const damage = before - e.hp;
+      if (damage > 0) {
+        this._animateEnemyHit(e.id, damage, cardInfo?.hitPreset || 'light');
+      }
+    });
+
+    audio.playSfx(cardInfo?.impactSfx || 'card_play');
+    this._refreshBattleHud();
+
+    if (result.result?.isOver) {
+      this._finishBattle(result);
+      return;
+    }
+
+    this._reRenderHand();
+  }
+
+  _castUltimate() {
+    const core = this.battleCore;
+    if (!core.canUltimate()) return;
+
+    // Snapshot HPs
+    const hpBefore = {};
+    core.enemies.forEach(e => { hpBefore[e.id] = e.hp; });
+
+    audio.playSfx('ultimate_click');
+
+    // For swordsman: show cinematic image fade-in BEFORE applying damage
+    if (this.character.id === 'swordsman') {
+      this._showUltimateCinematic(() => {
+        const result = core.castUltimate();
+        if (!result.accepted) return;
+        this._applyUltimateAnimations(hpBefore, 'execute');
+        this._refreshBattleHud();
+        if (result.result?.isOver) {
+          this._finishBattle(result);
+          return;
+        }
+        this._reRenderHand();
+      });
+    } else {
+      const result = core.castUltimate();
+      if (!result.accepted) return;
+      this._applyUltimateAnimations(hpBefore, 'execute');
+      this._refreshBattleHud();
+      if (result.result?.isOver) {
+        this._finishBattle(result);
+        return;
+      }
+      this._reRenderHand();
+    }
+  }
+
+  /** Helper: apply ultimate damage animations */
+  _applyUltimateAnimations(hpBefore, hitPreset) {
+    this._showCastBanner('万剑归流', '大招', true);
+    this._animatePlayerAttack();
+    const core = this.battleCore;
+    core.enemies.forEach(e => {
+      const before = hpBefore[e.id] || 0;
+      const damage = before - e.hp;
+      if (damage > 0) {
+        this._animateEnemyHit(e.id, damage, hitPreset);
+      }
+    });
+  }
+
+  /** Fullscreen cinematic image fade-in for swordsman ultimate */
+  _showUltimateCinematic(onComplete) {
+    const overlay = document.createElement('div');
+    overlay.className = 'ultimate-cinematic-overlay';
+    overlay.innerHTML = `
+      <div class="ultimate-cinematic-bg"></div>
+      <div class="ultimate-cinematic-image-wrap">
+        <img src="assets/ultimate_cinematic.jpg" class="ultimate-cinematic-image" />
+        <div class="ultimate-cinematic-vignette"></div>
+      </div>
+      <div class="ultimate-cinematic-text">
+        <div class="ultimate-cinematic-name">万剑归流</div>
+        <div class="ultimate-cinematic-sub">剑圣 · 大招</div>
+      </div>
+      <div class="ultimate-cinematic-flash"></div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Fade in: 800ms
+    requestAnimationFrame(() => {
+      overlay.classList.add('cinematic-show');
+    });
+
+    // Hold: 1000ms
+    setTimeout(() => {
+      overlay.classList.add('cinematic-flash-out');
+    }, 900);
+
+    // Fade out: 500ms
+    setTimeout(() => {
+      overlay.classList.add('cinematic-hide');
+      setTimeout(() => {
+        overlay.remove();
+        if (onComplete) onComplete();
+      }, 500);
+    }, 1700);
+  }
+
+  _endTurn() {
+    if (this.state !== 'battle') return;
+    audio.playSfx('card_discard');
+
+    const core = this.battleCore;
+    const hpBefore = core.hp;
+
+    // Run enemy turn
+    const result = core.endTurn();
+
+    if (!result.accepted) return;
+
+    // Animate enemy attacks on player
+    const damageTaken = hpBefore - core.hp;
+    if (damageTaken > 0) {
+      // Animate each alive enemy attacking
+      core.enemies.forEach(e => {
+        if (e.alive) {
+          this._animateEnemyAttack(e.id);
+        }
+      });
+      setTimeout(() => {
+        this._animatePlayerHit(damageTaken);
+        this._refreshBattleHud();
+      }, 200);
+    }
+
+    this._refreshBattleHud();
+
+    if (result.result?.isOver) {
+      setTimeout(() => { if (this.state === 'battle') this._finishBattle(result); }, 350);
+      return;
+    }
+
+    // Delay before showing new hand
+    setTimeout(() => {
+      if (this.state !== 'battle') return;
+      this._renderBattleUI();
+    }, 500);
+  }
+
+  _reRenderHand() {
+    const scrollEl = document.getElementById('cardHandScroll');
+    if (scrollEl) {
+      scrollEl.innerHTML = this._renderHandCards();
+    }
+    document.querySelectorAll('.enemy-unit').forEach(el => el.classList.remove('targetable'));
+    if (this._targetMode) {
+      const aliveEnemyIds = this.battleCore.getAliveEnemyIds();
+      aliveEnemyIds.forEach(eid => {
+        const el = document.getElementById(`enemy_${eid}`);
+        if (el) el.classList.add('targetable');
+      });
+    }
+  }
+
+  // ============ ANIMATION SYSTEM ============
+
+  /** Show cast banner */
+  _showCastBanner(cardName, tag, isUltimate) {
+    const overlay = document.createElement('div');
+    overlay.className = 'battle-overlay';
+    overlay.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;z-index:100;pointer-events:none;';
+    overlay.innerHTML = `
+      <div class="cast-banner" style="animation:bannerIn 0.22s ease forwards">
+        <div class="cast-banner-tag ${isUltimate ? 'ultimate' : ''}">${tag}</div>
+        <div class="cast-banner-name">${cardName}</div>
+      </div>`;
+    const arena = document.getElementById('battleArena');
+    if (arena) arena.appendChild(overlay);
+    setTimeout(() => {
+      overlay.querySelector('.cast-banner').classList.add('out');
+      setTimeout(() => overlay.remove(), 240);
+    }, 600);
+  }
+
+  /** Animate hit on enemy */
+  _animateEnemyHit(enemyId, damage, hitPreset) {
+    // Convert BattleCore enemy ID to DOM ID
+    const domId = `enemy_${enemyId}`;
+    const enemyEl = document.getElementById(domId);
+    if (!enemyEl || damage <= 0) return;
+
+    // Hit flash + recoil
+    enemyEl.classList.remove('hit-flash', 'hit-recoil');
+    void enemyEl.offsetWidth;
+    enemyEl.classList.add('hit-flash', 'hit-recoil');
+    setTimeout(() => enemyEl.classList.remove('hit-flash', 'hit-recoil'), 260);
+
+    // Damage popup
+    const popup = document.createElement('div');
+    popup.className = 'dmg-popup';
+    if (hitPreset === 'execute') popup.classList.add('execute');
+    else if (hitPreset === 'heavy') popup.classList.add('crit');
+    popup.textContent = `-${Math.floor(damage)}`;
+    enemyEl.appendChild(popup);
+    setTimeout(() => popup.remove(), 950);
+
+    // Particle effects based on hit type
+    const cat = hitPreset;
+    if (cat === 'execute') {
+      this._spawnSlash(enemyEl, '#e0604a');
+      this._spawnParticles(enemyEl, '#e0604a', 10);
+      this._spawnImpact(enemyEl, '#e0604a');
+      this._shake('execute');
+      this._flashFrame();
+    } else if (cat === 'heavy') {
+      this._spawnImpact(enemyEl, '#e8b088');
+      this._spawnParticles(enemyEl, '#d98e4a', 8);
+      this._shake('heavy');
+      this._flashFrame();
+    } else if (cat === 'standard') {
+      this._spawnSlash(enemyEl, '#cfe8f5');
+      this._spawnParticles(enemyEl, '#cbbc9c', 5);
+      this._shake('standard');
+    } else {
+      this._spawnSlash(enemyEl, '#d0e0f0');
+      this._spawnParticles(enemyEl, '#cbbc9c', 4);
+      this._shake('light');
+    }
+  }
+
+  /** Animate player hit from enemy */
+  _animatePlayerHit(damage) {
+    if (damage <= 0) return;
+    const playerEl = document.getElementById('playerSprite');
+    if (playerEl) {
+      playerEl.classList.remove('hit-flash', 'player-hit-recoil');
+      void playerEl.offsetWidth;
+      playerEl.classList.add('hit-flash', 'player-hit-recoil');
+      setTimeout(() => playerEl.classList.remove('hit-flash', 'player-hit-recoil'), 260);
+
+      const popup = document.createElement('div');
+      popup.className = 'dmg-popup enemy-dmg';
+      popup.textContent = `-${Math.floor(damage)}`;
+      playerEl.appendChild(popup);
+      setTimeout(() => popup.remove(), 950);
+    }
+    this._shake('standard');
+  }
+
+  /** Animate player attack lunge */
+  _animatePlayerAttack() {
+    const playerEl = document.getElementById('playerSprite');
+    if (playerEl) {
+      playerEl.classList.remove('attack-lunge');
+      void playerEl.offsetWidth;
+      playerEl.classList.add('attack-lunge');
+      setTimeout(() => playerEl.classList.remove('attack-lunge'), 350);
+    }
+  }
+
+  /** Animate enemy attack lunge */
+  _animateEnemyAttack(enemyId) {
+    const domId = `enemy_${enemyId}`;
+    const enemyEl = document.getElementById(domId);
     if (enemyEl) {
       enemyEl.classList.remove('attack-lunge');
       void enemyEl.offsetWidth;
       enemyEl.classList.add('attack-lunge');
-
-      // 敌方技能名小标签
-      const tag = document.createElement('div');
-      tag.className = 'dmg-popup';
-      tag.style.cssText = 'top:-30px;font-size:14px;color:var(--paper-dim);font-family:var(--font-song);letter-spacing:2px;';
-      tag.textContent = data.skill;
-      enemyEl.appendChild(tag);
-      setTimeout(() => tag.remove(), 900);
+      setTimeout(() => enemyEl.classList.remove('attack-lunge'), 350);
     }
-
-    // 玩家受击
-    if (playerSprite) {
-      playerSprite.classList.remove('hit-flash', 'player-hit-recoil');
-      void playerSprite.offsetWidth;
-      playerSprite.classList.add('hit-flash', 'player-hit-recoil');
-      setTimeout(() => playerSprite.classList.remove('hit-flash', 'player-hit-recoil'), 260);
-
-      const popup = document.createElement('div');
-      popup.className = 'dmg-popup enemy-dmg';
-      popup.textContent = `-${data.damage}`;
-      playerSprite.appendChild(popup);
-      setTimeout(() => popup.remove(), 950);
-    }
-
-    this._shake('standard');
-    audio.playSfx('hit');
   }
 
-  // ---------- 处决 ----------
-  _showExecute(data) {
-    const arena = document.getElementById('battleArena');
-    if (arena) {
-      const cine = document.createElement('div');
-      cine.className = 'execute-cinematic';
-      cine.innerHTML = `
-        <div class="execute-char">斩</div>
-        <div class="execute-label">处 决 · ${data.target}</div>
-      `;
-      arena.appendChild(cine);
-      setTimeout(() => cine.remove(), 950 / this.battleSpeed);
-    }
-    this._flashFrame();
-    this._shake('execute');
-    audio.playSfx('execute');
-  }
+  // ============ FX GENERATORS ============
 
-  // ---------- 状态图标 ----------
-  _applyStatusChip(data) {
-    if (data.targetId === 'player') return;
-    const idx = data.targetId.replace('enemy_', '');
-    if (!this._enemyStatuses[idx]) this._enemyStatuses[idx] = {};
-    this._enemyStatuses[idx][data.status] = data.stacks;
-    this._renderStatusChips(idx);
-  }
-
-  _renderStatusChips(idx) {
-    const row = document.getElementById(`status_${idx}`);
-    if (!row) return;
-    const names = { burn: '燃', armorBreak: '甲' };
-    const statuses = this._enemyStatuses[idx] || {};
-    row.innerHTML = Object.entries(statuses)
-      .filter(([, stacks]) => stacks > 0)
-      .map(([type, stacks]) => `<span class="status-chip ${type}">${names[type] || type}·${stacks}</span>`)
-      .join('');
-  }
-
-  // ---------- FX 生成器 ----------
   _fxLayer() { return document.getElementById('fxLayer'); }
 
   _centerIn(el, container) {
@@ -1177,13 +934,12 @@ class GameController {
     return { x: er.left - cr.left + er.width / 2, y: er.top - cr.top + er.height / 2 };
   }
 
-  /** 剑技斩击弧光 */
   _spawnSlash(targetEl, color) {
     const layer = this._fxLayer();
     if (!layer) return;
     const c = this._centerIn(targetEl, layer);
     const rot = -55 + Math.random() * 70;
-    const size = 96 + Math.random() * 30;
+    const size = 80 + Math.random() * 30;
     const gradId = `slashGrad_${++GameController._fxSeq}`;
     const fx = document.createElement('div');
     fx.className = 'slash-fx';
@@ -1203,42 +959,18 @@ class GameController {
     setTimeout(() => fx.remove(), 340);
   }
 
-  /** 剑气月牙波：从玩家飞向目标 */
-  _spawnQiWave(targetEl, isBloom) {
-    const layer = this._fxLayer();
-    const playerEl = document.getElementById('playerSprite');
-    if (!layer || !playerEl) return;
-    const from = this._centerIn(playerEl, layer);
-    const to = this._centerIn(targetEl, layer);
-    const size = isBloom ? 84 : 56;
-    const fx = document.createElement('div');
-    fx.className = 'qi-wave';
-    fx.style.cssText = `left:${from.x - size / 2}px;top:${from.y - size / 2}px;width:${size}px;height:${size}px;
-      --fx-from-x:0px;--fx-from-y:0px;--fx-to-x:${to.x - from.x}px;--fx-to-y:${to.y - from.y}px;`;
-    const color = isBloom ? '#ecd394' : '#a8d8e8';
-    fx.innerHTML = `
-      <svg viewBox="0 0 100 100" width="100%" height="100%" style="transform:rotate(${Math.atan2(to.y - from.y, to.x - from.x) * 180 / Math.PI - 45}deg)">
-        <path d="M 50 4 A 46 46 0 0 1 96 50 A 60 60 0 0 0 50 4 Z" fill="${color}" opacity="0.9"/>
-        <path d="M 50 14 A 36 36 0 0 1 86 50 A 48 48 0 0 0 50 14 Z" fill="#ffffff" opacity="0.55"/>
-      </svg>`;
-    layer.appendChild(fx);
-    setTimeout(() => fx.remove(), 460);
-  }
-
-  /** 拳脚冲击环 */
   _spawnImpact(targetEl, color) {
     const layer = this._fxLayer();
     if (!layer) return;
     const c = this._centerIn(targetEl, layer);
     const fx = document.createElement('div');
     fx.className = 'impact-ring';
-    const size = 110;
+    const size = 100;
     fx.style.cssText = `left:${c.x}px;top:${c.y}px;width:${size}px;height:${size}px;--impact-color:${color};`;
     layer.appendChild(fx);
     setTimeout(() => fx.remove(), 380);
   }
 
-  /** 墨点/火花粒子 */
   _spawnParticles(targetEl, color, count) {
     const layer = this._fxLayer();
     if (!layer) return;
@@ -1247,16 +979,14 @@ class GameController {
       const p = document.createElement('div');
       p.className = 'ink-particle';
       const angle = Math.random() * Math.PI * 2;
-      const dist = 24 + Math.random() * 46;
+      const dist = 20 + Math.random() * 40;
       const size = 3 + Math.random() * 5;
-      p.style.cssText = `left:${c.x}px;top:${c.y}px;width:${size}px;height:${size}px;
-        --dx:${Math.cos(angle) * dist}px;--dy:${Math.sin(angle) * dist}px;--particle-color:${color};`;
+      p.style.cssText = `left:${c.x}px;top:${c.y}px;width:${size}px;height:${size}px;--dx:${Math.cos(angle) * dist}px;--dy:${Math.sin(angle) * dist}px;--particle-color:${color};`;
       layer.appendChild(p);
       setTimeout(() => p.remove(), 600);
     }
   }
 
-  /** 震屏 */
   _shake(level) {
     const arena = document.getElementById('battleArena');
     if (!arena) return;
@@ -1266,7 +996,6 @@ class GameController {
     setTimeout(() => arena.classList.remove(`shake-${level}`), 560);
   }
 
-  /** 白闪帧 */
   _flashFrame() {
     const arena = document.getElementById('battleArena');
     if (!arena) return;
@@ -1276,166 +1005,182 @@ class GameController {
     setTimeout(() => f.remove(), 200);
   }
 
-  /** 剑意/蓄势珠 + 层数显示 */
-  _updateOrbs() {
-    const orbs = document.getElementById('intentOrbs');
-    if (orbs && this.character.id === 'swordsman') {
-      // 剑意：3 珠表示点数（0-3）
-      Array.from(orbs.children).forEach((orb, i) => {
-        orb.classList.toggle('filled', i < this._liveIntentPoints);
-      });
-      // 层数显示 I/II/III
-      for (let l = 1; l <= 3; l++) {
-        const el = document.getElementById(`lvlStep${l}`);
-        if (el) el.classList.toggle('active', l <= this._liveIntentLevel);
-      }
-      // 增伤百分比
-      const bonusEl = document.querySelector('.intent-bonus');
-      if (bonusEl) bonusEl.textContent = `+${this._liveIntentLevel * 10}%`;
-      // 资源文本
-      const resEl = document.getElementById(this.character.resource.key);
-      if (resEl) {
-        const roman = ['0', 'I', 'II', 'III'][this._liveIntentLevel];
-        resEl.textContent = `lv.${this._liveIntentLevel}`;
-      }
-      const ptsEl = document.getElementById(this.character.resource.key + 'Points');
-      if (ptsEl) ptsEl.textContent = `${this._liveIntentPoints}/3`;
-    }
-    if (orbs && this.character.id === 'martialArtist') {
-      Array.from(orbs.children).forEach((orb, i) => {
-        orb.classList.toggle('filled', i < this._liveMomentum);
-      });
-      const resEl = document.getElementById(this.character.resource.key);
-      if (resEl) resEl.textContent = this._liveMomentum;
-    }
-  }
+  _refreshBattleHud() {
+    const core = this.battleCore;
+    const state = core.getState();
 
-  _updateHpBars() {
-    const result = this.battleResult;
+    // Energy
+    const energyVal = document.getElementById('energyVal');
+    if (energyVal) energyVal.textContent = state.energy;
 
-    // Player HP（实时演出值）
+    // HP
     const playerHpBar = document.getElementById('playerHpBar');
     if (playerHpBar) {
-      const live = Math.max(0, this._livePlayerHp);
       const fill = playerHpBar.querySelector('.hp-fill');
-      if (fill) fill.style.width = `${(live / result.player.maxHp * 100)}%`;
+      if (fill) fill.style.width = `${Math.max(0, (state.player.hp / state.player.maxHp) * 100)}%`;
       const text = document.getElementById('playerHpText');
-      if (text) text.textContent = `${live}/${result.player.maxHp}`;
+      if (text) text.textContent = `${state.player.hp}/${state.player.maxHp}`;
     }
 
-    // Enemy HP（实时演出值）
-    result.enemies.forEach((enemy, i) => {
-      const el = document.getElementById(`enemy_${i}`);
+    // Player shield
+    const playerSprite = document.getElementById('playerSprite');
+    if (playerSprite) {
+      const shieldEl = playerSprite.querySelector('.player-shield');
+      if (state.player.shield > 0) {
+        if (!shieldEl) {
+          const s = document.createElement('div');
+          s.className = 'player-shield';
+          s.textContent = `🛡${state.player.shield}`;
+          playerSprite.appendChild(s);
+        } else {
+          shieldEl.textContent = `🛡${state.player.shield}`;
+        }
+      } else if (shieldEl) {
+        shieldEl.remove();
+      }
+    }
+
+    // Enemies
+    state.enemies.forEach((enemy, i) => {
+      const el = document.getElementById(`enemy_${enemy.id}`);
       if (el) {
-        const live = Math.max(0, this._liveEnemyHp[i] ?? enemy.hp);
-        if (live <= 0 && !el.classList.contains('dead')) {
-          el.classList.add('dead');
-          // 清除状态图标
-          const row = document.getElementById(`status_${i}`);
-          if (row) row.innerHTML = '';
+        const bar = el.querySelector('.hp-fill');
+        if (bar) bar.style.width = `${Math.max(0, (enemy.hp / enemy.maxHp) * 100)}%`;
+        const text = el.querySelector('.hp-text');
+        if (text) text.textContent = `${Math.max(0, enemy.hp)}/${enemy.maxHp}`;
+        if (!enemy.alive) el.classList.add('dead');
+        // Shield on enemy
+        const shieldEl = el.querySelector('.shield-indicator');
+        if (enemy.shield > 0) {
+          if (!shieldEl) {
+            const s = document.createElement('div');
+            s.className = 'shield-indicator';
+            s.textContent = `🛡${enemy.shield}`;
+            el.appendChild(s);
+          } else {
+            shieldEl.textContent = `🛡${enemy.shield}`;
+          }
+        } else if (shieldEl) {
+          shieldEl.remove();
         }
-        const hpBar = el.querySelector('.hp-bar');
-        if (hpBar) {
-          const fill = hpBar.querySelector('.hp-fill');
-          if (fill) fill.style.width = `${(live / enemy.maxHp * 100)}%`;
-          const text = hpBar.nextElementSibling;
-          if (text) text.textContent = `${live}/${enemy.maxHp}`;
+        // Status chips
+        const statusRow = el.querySelector('.status-row');
+        if (statusRow && enemy.statuses) {
+          const names = { poison: '毒', armorBreak: '甲', weak: '弱', vulnerable: '脆' };
+          statusRow.innerHTML = Object.entries(enemy.statuses)
+            .filter(([, inst]) => inst.stacks > 0)
+            .map(([type, inst]) => `<span class="status-chip ${type}">${names[type] || type}·${inst.stacks}</span>`)
+            .join('');
         }
+        // Update intent
+        const intentEl = document.getElementById(`intent_${enemy.id}`);
+        if (intentEl && !enemy.alive) intentEl.classList.add('dead');
       }
     });
-  }
 
-  setSpeed(speed) {
-    this.battleSpeed = speed;
-    audio.playUiClick();
-    // Update buttons
-    document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector(`.speed-btn:nth-child(${speed === 1 ? 1 : speed === 2 ? 2 : 3})`)?.classList.add('active');
-  }
-
-  skipBattle() {
-    audio.playUiClick();
-    if (this._playTimer) clearTimeout(this._playTimer);
-    // 直接落到最终状态
-    if (this.battleResult) {
-      this._livePlayerHp = Math.max(0, this.battleResult.player.hp);
-      this.battleResult.enemies.forEach((e, i) => { this._liveEnemyHp[i] = Math.max(0, e.hp); });
+    // Resource
+    if (this.character.id === 'swordsman') {
+      const display = document.getElementById('swordIntentDisplay');
+      if (display) {
+        const dots = display.querySelectorAll('.intent-dot');
+        dots.forEach((dot, i) => dot.classList.toggle('filled', i < state.swordIntent));
+      }
+      const ultBtn = document.getElementById('ultimateBtn');
+      if (ultBtn) {
+        ultBtn.classList.toggle('ready', state.swordIntent >= 3);
+        ultBtn.classList.toggle('locked', state.swordIntent < 3);
+        ultBtn.textContent = state.swordIntent >= 3 ? '⚔️ 万剑归流' : `剑意 ${state.swordIntent}/3`;
+        ultBtn.disabled = state.swordIntent < 3;
+      }
+    } else {
+      const display = document.getElementById('momentumDisplay');
+      if (display) {
+        const dots = display.querySelectorAll('.momentum-dot');
+        dots.forEach((dot, i) => dot.classList.toggle('filled', i < state.momentum));
+      }
     }
-    this._updateHpBars();
-    this._finishBattle();
+
+    // Pile counts
+    const pileBtns = document.querySelectorAll('.pile-btn');
+    if (pileBtns.length >= 3) {
+      pileBtns[0].innerHTML = `<span class="pile-icon">📦</span>${state.drawPileCount}`;
+      pileBtns[1].innerHTML = `<span class="pile-icon">🗑</span>${state.discardPileCount}`;
+      pileBtns[2].innerHTML = `<span class="pile-icon">💨</span>${state.exhaustPileCount}`;
+    }
+
+    // Log
+    const logEl = document.getElementById('logContent');
+    if (logEl) {
+      const recent = state.log.slice(-5);
+      logEl.innerHTML = recent.map(l => {
+        const clean = l.replace(/^\[R\d+\] /, '').replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '').trim();
+        return `<div class="log-line">${clean}</div>`;
+      }).join('');
+      logEl.scrollTop = logEl.scrollHeight;
+    }
   }
 
-  _finishBattle() {
-    if (this._playTimer) { clearTimeout(this._playTimer); this._playTimer = null; }
+  _finishBattle(result) {
     if (this.state !== 'battle') return;
     this.state = 'battle_end';
     audio.stopBgm();
-    const result = this.battleResult;
-    this.hp = Math.max(0, result.player.hp);
-    this.proficiency = result.proficiency;
-    this.pendingUpgrades = result.pendingUpgrades || [];
 
-    if (result.defeat) {
+    const coreResult = result.result || this.battleCore.getResult();
+    const state = this.battleCore.getState();
+
+    // Update player HP
+    this.hp = Math.max(0, state.player.hp);
+
+    // Update proficiency
+    this.proficiency = { ...state.proficiency };
+    this.pendingUpgrades = [...state.pendingUpgrades];
+
+    if (coreResult.defeat) {
+      this.battleResult = { defeat: true, player: state.player, enemies: state.enemies, log: state.log, rounds: state.round };
       this.showGameOver();
       return;
     }
 
-    if (result.victory) {
-      // Calculate rewards
+    if (coreResult.victory) {
       const isBoss = this.currentNode?.type === 'boss';
       const isElite = this.currentNode?.type === 'elite';
       const supplyReward = isBoss ? this.rng.nextInt(45, 60) : isElite ? this.rng.nextInt(28, 40) : this.rng.nextInt(12, 18);
       this.supply += supplyReward;
 
-      // 战利品
       const lootOptions = this._generateLoot(isBoss, isElite);
-
-      // If boss, mark region cleared (only for final chapter)
       if (isBoss && this.currentRegion >= REGIONS.length - 1) {
         this.regionCleared = true;
         audio.playBgm('victory');
       }
 
-      this.showBattleReward(supplyReward, lootOptions, result);
+      this.battleResult = { victory: true, player: state.player, enemies: state.enemies, log: state.log, rounds: state.round, proficiency: state.proficiency };
+      this.showBattleReward(supplyReward, lootOptions);
     }
   }
 
   _generateLoot(isBoss, isElite) {
     const options = [];
-    const pool = this.character.skillPool;
-    const existingIds = this.skills.map(s => s.id);
+    const pool = this.character.cardPool;
+    const existingIds = new Set(this.cards);
 
-    // 新技能奖励
-    const newSkills = pool.filter(s => !existingIds.includes(s.id));
-    const shuffledNew = this.rng.shuffle([...newSkills]);
+    // New cards from character pool
+    const newCards = pool.filter(c => !existingIds.has(c.id));
+    const shuffledNew = this.rng.shuffle([...newCards]);
     const newCount = Math.min(2, shuffledNew.length);
     for (let i = 0; i < newCount; i++) {
-      options.push({ type: 'skill', data: shuffledNew[i], isDuplicate: false });
+      options.push({ type: 'card', data: shuffledNew[i], isDuplicate: false });
     }
 
-    // 重复技能奖励（已有技能 → 提升熟练度）；首领战不再给熟练奖励，专供神话装备
-    if (!isBoss && this.skills.length > 0) {
-      const duplicates = this.skills.filter(s => {
-        const prof = this.proficiency[s.id];
-        return prof && prof.level < 5;
-      });
-      if (duplicates.length > 0) {
-        const shuffledDup = this.rng.shuffle([...duplicates]);
-        options.push({ type: 'skill', data: shuffledDup[0], isDuplicate: true });
-      }
-    }
-
-    const existingEqIds = this.equipment.map(eq => eq.id);
-    const mythicPool = EQUIPMENT.filter(eq => eq.rarity === '神话' && !existingEqIds.includes(eq.id));
+    // Equipment
+    const existingEqIds = new Set(this.equipment.map(eq => eq.id));
 
     if (isBoss) {
-      // 神话装备：仅击败每层最终首领时作为保证奖励掉落
+      const mythicPool = EQUIPMENT.filter(eq => eq.rarity === '神话' && !existingEqIds.has(eq.id));
       if (mythicPool.length > 0) {
         options.push({ type: 'equipment', data: this.rng.pick(mythicPool), isMythic: true });
       }
     } else {
-      // 普通/精英战斗：从非常稀有装备池中抽取，绝不掉落神话
-      const normalEq = EQUIPMENT.filter(eq => eq.rarity !== '神话' && !existingEqIds.includes(eq.id));
+      const normalEq = EQUIPMENT.filter(eq => eq.rarity !== '神话' && !existingEqIds.has(eq.id));
       if (normalEq.length > 0 && (isElite || this.rng.nextFloat() < 0.25)) {
         options.push({ type: 'equipment', data: this.rng.pick(normalEq) });
       }
@@ -1444,9 +1189,11 @@ class GameController {
     return this.rng.shuffle(options).slice(0, 3);
   }
 
-  showBattleReward(supplyReward, lootOptions, result) {
+  showBattleReward(supplyReward, lootOptions) {
     this.state = 'reward';
-    this._lootOptions = lootOptions; // 存储以供 pickLoot 使用
+    this._lootOptions = lootOptions;
+    const result = this.battleResult;
+    const deckSize = this.cards.length;
 
     document.getElementById('app').innerHTML = `
       <div class="screen reward-screen">
@@ -1456,49 +1203,24 @@ class GameController {
           <div class="reward-summary">
             <div class="reward-item">物资 <span class="hl">+${supplyReward}</span>（共 ${this.supply}）</div>
             <div class="reward-item">剩余生命 <span class="hl">${this.hp}/${this.maxHp}</span></div>
-            <div class="reward-item">回合数 <span class="hl">${result.rounds}</span></div>
-          </div>
-
-          <div class="battle-stats">
-            <h3>战斗统计</h3>
-            <div class="stats-grid">
-              <div class="stat-item">
-                <div class="stat-val">${result.rounds}</div>
-                <div class="stat-label">回合</div>
-              </div>
-              <div class="stat-item">
-                <div class="stat-val">${Object.values(result.proficiency).reduce((s,p) => s + p.xp, 0)}</div>
-                <div class="stat-label">熟练经验</div>
-              </div>
-            </div>
+            <div class="reward-item">牌组 <span class="hl">${deckSize}张</span> · 回合 ${result.rounds}</div>
           </div>
 
           ${lootOptions.length > 0 ? `
           <div class="loot-section">
-            <h3>择一奖励（技能池 ${this.skills.length}/${this.character.skillSlots}）</h3>
+            <h3>择一奖励</h3>
             <div class="loot-cards">
-              ${lootOptions.map((opt, i) => {
-                const existingProf = opt.type === 'skill' && opt.isDuplicate ? (this.proficiency[opt.data.id] || { level: 1, xp: 0 }) : null;
-                const nextLevelXp = existingProf ? [0, 4, 12, 26, 48][Math.min(4, existingProf.level)] : null;
-                return `
+              ${lootOptions.map((opt, i) => `
                 <div class="loot-card${opt.type === 'equipment' && opt.isMythic ? ' loot-card-mythic' : ''}" onclick="game.pickLoot(${i})">
-                  ${opt.type === 'skill' ? `
-                    <div class="seal loot-icon">${opt.isDuplicate ? '↑' : opt.data.name.charAt(0)}</div>
-                    <div class="loot-name">${opt.data.name} ${opt.isDuplicate ? '<span class="loot-upgrade-badge">进阶</span>' : ''}</div>
+                  ${opt.type === 'card' ? `
+                    <div class="seal loot-icon">${opt.data.name.charAt(0)}</div>
+                    <div class="loot-name">${opt.data.name}</div>
                     <div class="loot-desc">${opt.data.desc}</div>
-                    ${opt.isDuplicate ? `
-                    <div class="loot-upgrade-info">
-                      <span>当前 Lv${existingProf.level}</span>
-                      <span>熟练 ${existingProf.xp}/${nextLevelXp}</span>
-                      <span class="loot-upgrade-gain">→ 获得 +8 熟练经验</span>
-                    </div>
-                    ` : `
                     <div class="loot-tags">
-                      <span class="tag">${opt.data.tag}</span>
-                      <span class="tag">权重 ${opt.data.baseWeight}</span>
-                      <span class="tag">冷却 ${opt.data.cooldown}</span>
+                      <span class="tag">${opt.data.tags[0]}</span>
+                      <span class="tag">费${opt.data.energyCost}</span>
+                      ${opt.data.pileKeywords.map(k => `<span class="tag">${k}</span>`).join('')}
                     </div>
-                    `}
                   ` : `
                     <div class="seal loot-icon">器</div>
                     <div class="loot-name">${opt.data.name} <span class="loot-rarity ${opt.data.rarity}">${opt.data.rarity}</span></div>
@@ -1506,22 +1228,12 @@ class GameController {
                   `}
                   <button class="btn btn-primary btn-sm">取之</button>
                 </div>
-                `;
-              }).join('')}
+              `).join('')}
             </div>
           </div>
           ` : '<p>此行无有可取之获</p>'}
 
-          <div class="reward-actions">
-            ${this.pendingUpgrades.length > 0 ? `
-            <button class="btn btn-accent" onclick="game.showPendingUpgrades()">
-              处理熟练升级 (${this.pendingUpgrades.length})
-            </button>
-            ` : ''}
-            <button class="btn btn-primary btn-block" onclick="game.continueAfterBattle()">
-              继续探索 →
-            </button>
-          </div>
+          <button class="btn btn-primary btn-block" onclick="game.continueAfterBattle()">继续探索 →</button>
         </div>
       </div>
     `;
@@ -1533,8 +1245,7 @@ class GameController {
     if (!lootOptions || index >= lootOptions.length) return;
 
     const opt = lootOptions[index];
-    const lootCards = document.querySelectorAll('.loot-card');
-    lootCards.forEach((card, i) => {
+    document.querySelectorAll('.loot-card').forEach((card, i) => {
       if (i !== index) card.style.opacity = '0.4';
       else card.classList.add('picked');
     });
@@ -1542,65 +1253,16 @@ class GameController {
       document.querySelectorAll('.loot-card button').forEach(b => b.disabled = true);
     }, 300);
 
-    // 真正应用奖励
-    if (opt.type === 'skill') {
-      if (opt.isDuplicate) {
-        // 重复技能：提升熟练度
-        const prof = this.proficiency[opt.data.id];
-        if (prof) {
-          const xpGain = 8;
-          prof.xp += xpGain;
-          const oldLevel = prof.level;
-          const newLevel = this._calcProficiencyLevel(prof.xp);
-          prof.level = newLevel;
-          const boostMsg = newLevel > oldLevel
-            ? `「${opt.data.name}」熟练提升！Lv${oldLevel} → Lv${newLevel}`
-            : `「${opt.data.name}」熟练 +${xpGain}（当前 Lv${prof.level}，${prof.xp}/${[0,4,12,26,48][Math.min(4, prof.level)]}）`;
-          this._showLootToast(boostMsg);
-        }
-      } else {
-        // 新技能
-        if (this.skills.length >= this.character.skillSlots) {
-          // 槽已满：替换第一个技能
-          const replaced = this.skills[0];
-          this.skills.shift();
-          delete this.proficiency[replaced.id];
-          this._showLootToast(`替换「${replaced.name}」，习得「${opt.data.name}」`);
-        }
-        this.skills.push(opt.data);
+    if (opt.type === 'card') {
+      this.cards.push(opt.data.id);
+      if (!this.proficiency[opt.data.id]) {
         this.proficiency[opt.data.id] = { xp: 0, level: 1 };
-        if (!opt.isDuplicate) {
-          this._showLootToast(`习得新技能「${opt.data.name}」`);
-        }
       }
+      this.toast(`获得【${opt.data.name}】牌组: ${this.cards.length}张`);
     } else if (opt.type === 'equipment') {
       this.equipment.push(opt.data);
-      this._showLootToast(`获得装备「${opt.data.name}」`);
+      this.toast(`获得装备「${opt.data.name}」`);
     }
-
-    audio.playSfx('skill_select');
-  }
-
-  _calcProficiencyLevel(xp) {
-    if (xp >= 48) return 5;
-    if (xp >= 26) return 4;
-    if (xp >= 12) return 3;
-    if (xp >= 4) return 2;
-    return 1;
-  }
-
-  _showLootToast(msg) {
-    const existing = document.querySelector('.loot-toast');
-    if (existing) existing.remove();
-    const toast = document.createElement('div');
-    toast.className = 'loot-toast';
-    toast.textContent = msg;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.classList.add('show'), 10);
-    setTimeout(() => {
-      toast.classList.remove('show');
-      setTimeout(() => toast.remove(), 300);
-    }, 2000);
   }
 
   continueAfterBattle() {
@@ -1610,7 +1272,6 @@ class GameController {
     } else {
       this.currentLayer++;
       if (this.currentLayer >= this.routeMap.layers) {
-        // 本节 Boss 已击败：章节升级
         if (this.currentRegion < REGIONS.length - 1) {
           this.currentRegion++;
           this.currentLayer = 0;
@@ -1618,7 +1279,6 @@ class GameController {
           this.routeMap = generateRouteMap(this.seed + this.currentRegion * 7777);
           this.showChapterClear();
         } else {
-          // 第四章通关：最终胜利
           this.regionCleared = true;
           this.showVictoryScreen();
         }
@@ -1632,35 +1292,34 @@ class GameController {
 
   showShop() {
     this.state = 'shop';
-    const shopSkills = this.rng.shuffle([...this.character.skillPool])
-      .filter(s => !this.skills.find(es => es.id === s.id))
-      .slice(0, 3);
+    const pool = this.character.cardPool;
+    const existingIds = new Set(this.cards);
+    const shopCards = this.rng.shuffle(pool.filter(c => !existingIds.has(c.id))).slice(0, 3);
 
     document.getElementById('app').innerHTML = `
       <div class="screen shop-screen">
         <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.14"></div>
         <div class="panel">
           <h2>商 栈</h2>
-          <p>物资 <span style="color:var(--gold-bright)">${this.supply}</span></p>
+          <p>物资 <span style="color:var(--gold-bright)">${this.supply}</span> · 牌组 ${this.cards.length}张</p>
 
           <div class="shop-section">
-            <h3>技能（55 - 80 物资）</h3>
+            <h3>技能卡（55 - 80 物资）</h3>
             <div class="shop-items">
-              ${shopSkills.map((s, i) => `
+              ${shopCards.map((c, i) => `
                 <div class="shop-item">
-                  <div class="seal shop-item-icon">${s.name.charAt(0)}</div>
+                  <div class="seal shop-item-icon">${c.name.charAt(0)}</div>
                   <div class="shop-item-info">
-                    <div class="shop-item-name">${s.name}</div>
-                    <div class="shop-item-desc">${s.desc}</div>
+                    <div class="shop-item-name">${c.name} <span class="tag">费${c.energyCost}</span></div>
+                    <div class="shop-item-desc">${c.desc}</div>
                     <div class="shop-item-tags">
-                      <span class="tag">${s.tag}</span>
-                      <span class="tag">权重 ${s.baseWeight}</span>
+                      ${c.tags.map(t => `<span class="tag">${t}</span>`).join('')}
                     </div>
                   </div>
                   <div class="shop-item-price">
                     <span>${60 + i * 10} 物资</span>
                     <button class="btn btn-primary btn-sm" ${this.supply >= (60+i*10) ? '' : 'disabled'}
-                      onclick="game.buySkill('${s.id}', ${60+i*10})">购</button>
+                      onclick="game.buyCard('${c.id}', ${60+i*10})">购</button>
                   </div>
                 </div>
               `).join('')}
@@ -1676,34 +1335,25 @@ class GameController {
                 <button class="btn btn-secondary btn-sm" onclick="game.buyHeal(30)">疗愈</button>
               </div>
               <div class="shop-item">
-                <span>随机遗忘 · 移除随机一个技能</span>
+                <span>删卡 · 移除随机一张牌</span>
                 <span>35 物资</span>
-                <button class="btn btn-secondary btn-sm" onclick="game.forgetRandomSkill()">随机遗忘</button>
+                <button class="btn btn-secondary btn-sm" onclick="game.removeRandomCard()">删卡</button>
               </div>
             </div>
           </div>
 
-          <button class="btn btn-primary btn-block" onclick="game.continueAfterBattle()">
-            离开商栈 →
-          </button>
+          <button class="btn btn-primary btn-block" onclick="game.continueAfterBattle()">离开商栈 →</button>
         </div>
       </div>
     `;
   }
 
-  buySkill(skillId, price) {
+  buyCard(cardId, price) {
     if (this.supply < price) return;
     audio.playUiClick();
-    const skill = this.character.skillPool.find(s => s.id === skillId);
-    if (!skill) return;
-
-    if (this.skills.length >= this.character.skillSlots) {
-      this.skills[0] = skill;
-    } else {
-      this.skills.push(skill);
-    }
     this.supply -= price;
-    this.proficiency[skillId] = { xp: 0, level: 1 };
+    this.cards.push(cardId);
+    if (!this.proficiency[cardId]) this.proficiency[cardId] = { xp: 0, level: 1 };
     this.showShop();
   }
 
@@ -1715,70 +1365,30 @@ class GameController {
     this.showShop();
   }
 
-  forgetRandomSkill() {
-    if (this.skills.length <= 1) return;
-    audio.playUiClick();
+  removeRandomCard() {
+    if (this.cards.length <= 3) { this.toast('牌组太少，无法删减'); return; }
     if (this.supply < 35) return;
-    const idx = this.rng.nextInt(0, this.skills.length - 1);
-    const removed = this.skills[idx];
-    this.skills.splice(idx, 1);
-    delete this.proficiency[removed.id];
-    this.supply -= 35;
-    this._renderAfterForget(`随机遗忘了【${removed.name}】`);
-  }
-
-  forgetSkill(skillId) {
-    if (this.skills.length <= 1) return;
     audio.playUiClick();
-    if (this.supply < 50) return;
-    const idx = this.skills.findIndex(s => s.id === skillId);
-    if (idx < 0) return;
-    const removed = this.skills[idx];
-    this.skills.splice(idx, 1);
-    delete this.proficiency[removed.id];
-    this.supply -= 50;
-    this._renderAfterForget(`遗忘了【${removed.name}】`);
+    const idx = this.rng.nextInt(0, this.cards.length - 1);
+    const removed = this.cards[idx];
+    this.cards.splice(idx, 1);
+    this.supply -= 35;
+    this.toast(`删除了【${ALL_CARDS[removed]?.name || removed}】`);
+    this.showShop();
   }
 
-  _renderAfterForget(msg) {
-    if (msg) this.toast(msg);
-    if (this.state === 'upgrade') this.showUpgrade();
-    else this.showShop();
-  }
-
-  // 轻量提示（无需阻断操作）
-  toast(text) {
-    if (typeof document === 'undefined') return;
-    const el = document.createElement('div');
-    el.className = 'wl-toast';
-    el.textContent = text;
-    document.body.appendChild(el);
-    setTimeout(() => el.remove(), 1600);
-  }
-
-  // ============ REST ============
+  // ============ REST / UPGRADE / EVENT / TREASURE ============
 
   showRest() {
     this.state = 'rest';
     const healAmount = Math.floor(this.maxHp * 0.25);
-    const alreadyRested = this.currentNode && this.currentNode.rested;
-
     document.getElementById('app').innerHTML = `
       <div class="screen rest-screen">
         <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.16"></div>
         <div class="panel">
           <h2>休 整</h2>
           <p>竹影婆娑，暂且歇脚。</p>
-
           <div class="rest-options">
-            ${alreadyRested ? `
-            <div class="rest-card rested">
-              <div class="rest-icon">✓</div>
-              <h3>已休整</h3>
-              <p>此处已歇过，不可再憩。</p>
-              <p class="rest-current">当前生命 ${this.hp}/${this.maxHp}</p>
-            </div>
-            ` : `
             <div class="rest-card" onclick="game.doRest()">
               <div class="rest-icon">憩</div>
               <h3>小憩</h3>
@@ -1786,12 +1396,8 @@ class GameController {
               <p class="rest-current">当前生命 ${this.hp}/${this.maxHp}</p>
               <button class="btn btn-primary">休息一下</button>
             </div>
-            `}
           </div>
-
-          <button class="btn btn-primary btn-block" onclick="game.continueAfterBattle()">
-            ${alreadyRested ? '继续赶路 →' : '不休息，继续赶路 →'}
-          </button>
+          <button class="btn btn-primary btn-block" onclick="game.continueAfterBattle()">继续赶路 →</button>
         </div>
       </div>
     `;
@@ -1800,151 +1406,8 @@ class GameController {
   doRest() {
     audio.playUiClick();
     this.hp = Math.min(this.maxHp, this.hp + Math.floor(this.maxHp * 0.25));
-    if (this.currentNode) this.currentNode.rested = true;
     this.showRest();
   }
-
-  // ============ STATS PANEL ============
-
-  showStatsPanel() {
-    audio.playUiClick();
-    const char = this.character;
-    const proficiencyLevels = [0, 4, 12, 26, 48]; // XP thresholds for L1-5
-
-    // 计算技能槽连携加成
-    const synergyTags = this.skills.map(s => s.tag);
-    let synergyInfo = '';
-    for (let i = 0; i < this.skills.length - 1; i++) {
-      if (this.skills[i].tag === this.skills[i + 1].tag) {
-        synergyInfo += `<div class="synergy-link">${this.skills[i].name} ↔ ${this.skills[i + 1].name}：同标签 +6%</div>`;
-      }
-    }
-
-    // 计算各技能基准出手率
-    const totalWeight = this.skills.reduce((sum, s) => sum + s.baseWeight, 0);
-
-    const panelHtml = `
-      <div class="stats-overlay" id="statsOverlay" onclick="game.closeStatsPanel()">
-        <div class="stats-panel" onclick="event.stopPropagation()">
-          <div class="stats-header">
-            <h2><span class="stats-portrait" style="background-image:url('${char.portrait}')"></span> ${char.name} · 当前属性</h2>
-            <button class="btn btn-ghost btn-sm" onclick="game.closeStatsPanel()">✕</button>
-          </div>
-
-          <div class="stats-section">
-            <div class="stats-grid-3">
-              <div class="stat-card">
-                <div class="stat-card-val">${this.hp}/${this.maxHp}</div>
-                <div class="stat-card-label">生命</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-card-val">${this.supply}</div>
-                <div class="stat-card-label">物资</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-card-val">${char.skillSlots}</div>
-                <div class="stat-card-label">技能槽</div>
-              </div>
-            </div>
-            ${this.signatureSword ? `
-            <div class="stats-subsection">
-              <h4>名剑</h4>
-              <div class="sword-info">
-                <span class="sword-name-tag">${this.signatureSword.name}</span>
-                <span class="sword-desc">${this.signatureSword.desc}</span>
-              </div>
-            </div>
-            ` : ''}
-            ${char.id === 'martialArtist' ? `
-            <div class="stats-subsection">
-              <h4>专属资源</h4>
-              <span class="resource-tag">蓄势 0–3</span>
-              <span class="resource-desc">每行动+1蓄势，满3触发重式×1.75</span>
-            </div>
-            ` : `
-            <div class="stats-subsection">
-              <h4>专属资源</h4>
-              <span class="resource-tag">剑意 0–3 层</span>
-              <span class="resource-desc">剑技命中层数+1，每层+10%伤害；3层可释放大招</span>
-            </div>
-            `}
-            ${this.equipment.length > 0 ? `
-            <div class="stats-subsection">
-              <h4>装备 (${this.equipment.length}件)</h4>
-              ${this.equipment.map(eq => `
-                <div class="equip-item">
-                  <span class="equip-name">${eq.name}</span>
-                  <span class="equip-rarity ${eq.rarity}">${eq.rarity}</span>
-                  <span class="equip-desc">${eq.desc}</span>
-                </div>
-              `).join('')}
-            </div>
-            ` : ''}
-          </div>
-
-          <div class="stats-section">
-            <h3>技能组合 (${this.skills.length}/${char.skillSlots})</h3>
-            <div class="skills-table">
-              ${this.skills.map((s, i) => {
-                const prof = this.proficiency[s.id] || { xp: 0, level: 1 };
-                const rawWeight = s.baseWeight;
-                const castRate = totalWeight > 0 ? (rawWeight / totalWeight * 100).toFixed(1) : '—';
-                const profXp = prof.xp;
-                const nextLevel = proficiencyLevels[Math.min(4, prof.level)];
-                const xpNeeded = nextLevel > profXp ? nextLevel - profXp : '—';
-                return `
-                <div class="skill-row" style="--skill-color:${s.category === 'sword_qi' ? '#a8d8e8' : s.category === 'sword_technique' ? '#cfe8f5' : s.category === 'fist' ? '#e8b088' : s.category === 'kick' ? '#e0604a' : '#cbbc9c'}">
-                  <div class="skill-slot-num">${i + 1}</div>
-                  <div class="skill-info-main">
-                    <div class="skill-name-row">
-                      <span class="skill-name">${s.name}</span>
-                      <span class="skill-tag-sm">${s.tag}</span>
-                      <span class="skill-lv">Lv${prof.level}</span>
-                    </div>
-                    <div class="skill-desc-sm">${s.desc}</div>
-                    <div class="skill-meta">
-                      <span>权重 ${rawWeight}</span>
-                      <span>基准出手率 ${castRate}%</span>
-                      <span>冷却 ${s.cooldown}回合</span>
-                      <span>熟练 ${profXp}/${nextLevel === '—' ? 'MAX' : nextLevel}${xpNeeded !== '—' ? ' (+'+xpNeeded+')' : ''}</span>
-                    </div>
-                  </div>
-                </div>
-                `;
-              }).join('')}
-            </div>
-            ${synergyInfo ? `
-            <div class="synergy-section">
-              <h4>槽位连携</h4>
-              ${synergyInfo}
-            </div>
-            ` : ''}
-          </div>
-        </div>
-      </div>
-    `;
-
-    // 在body上追加overlay，点击外部关闭
-    const existing = document.getElementById('statsOverlay');
-    if (existing) existing.remove();
-    const overlay = document.createElement('div');
-    overlay.id = 'statsOverlay';
-    overlay.innerHTML = panelHtml;
-    // 用 innerHTML 方式挂载，需要重新设置事件
-    document.body.appendChild(overlay);
-    // 重新绑定关闭事件
-    document.getElementById('statsOverlay').onclick = function(e) {
-      if (e.target === this) game.closeStatsPanel();
-    };
-  }
-
-  closeStatsPanel() {
-    audio.playUiClick();
-    const overlay = document.getElementById('statsOverlay');
-    if (overlay) overlay.remove();
-  }
-
-  // ============ UPGRADE ============
 
   showUpgrade() {
     this.state = 'upgrade';
@@ -1953,57 +1416,30 @@ class GameController {
         <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.14"></div>
         <div class="panel">
           <h2>改 造 站</h2>
-          <p>锤炼技艺，百炼成钢。物资 <span style="color:var(--gold-bright)">${this.supply}</span></p>
-
+          <p>物资 <span style="color:var(--gold-bright)">${this.supply}</span> · 牌组 ${this.cards.length}张</p>
           <div class="upgrade-actions">
-            <button class="btn btn-ghost btn-sm" onclick="game.forgetRandomSkill()" ${this.supply >= 35 ? '' : 'disabled'}>
-              35 物资 · 随机遗忘一个技能
+            <button class="btn btn-ghost btn-sm" onclick="game.removeRandomCard()" ${this.supply >= 50 && this.cards.length > 3 ? '' : 'disabled'}>
+              50 物资 · 删一张牌
             </button>
           </div>
-
           <div class="upgrade-list">
-            ${this.skills.map(s => {
-              const prof = this.proficiency[s.id];
-              const canForget = this.skills.length > 1 && this.supply >= 50;
+            ${this.cards.map(cid => {
+              const cd = ALL_CARDS[cid];
+              if (!cd) return '';
               return `
                 <div class="upgrade-item">
                   <div class="upgrade-info">
-                    <div class="upgrade-name">${s.name} <span class="tag">Lv${prof?.level || 1}</span></div>
-                    <div class="upgrade-desc">${s.desc}</div>
+                    <div class="upgrade-name">${cd.name} <span class="tag">费${cd.energyCost}</span></div>
+                    <div class="upgrade-desc">${cd.desc}</div>
                   </div>
-                  <div class="upgrade-btns">
-                    <button class="btn btn-secondary btn-sm" onclick="game.upgradeSkill('${s.id}')" ${this.supply >= 65 ? '' : 'disabled'}>
-                      65 物资 升级
-                    </button>
-                    <button class="btn btn-ghost btn-sm" onclick="game.forgetSkill('${s.id}')" ${canForget ? '' : 'disabled'}>
-                      50 物资 遗忘
-                    </button>
-                  </div>
-                </div>
-              `;
+                </div>`;
             }).join('')}
           </div>
-
-          <button class="btn btn-primary btn-block" onclick="game.continueAfterBattle()">
-            离开 →
-          </button>
+          <button class="btn btn-primary btn-block" onclick="game.continueAfterBattle()">离开 →</button>
         </div>
       </div>
     `;
   }
-
-  upgradeSkill(skillId) {
-    if (this.supply < 65) return;
-    audio.playUiClick();
-    this.supply -= 65;
-    if (this.proficiency[skillId]) {
-      this.proficiency[skillId].xp += 12;
-      this.proficiency[skillId].level = Math.min(5, this.proficiency[skillId].level + 1);
-    }
-    this.showUpgrade();
-  }
-
-  // ============ EVENT ============
 
   showEvent() {
     const events = [
@@ -2014,8 +1450,8 @@ class GameController {
     ];
     const event = this.rng.pick(events);
     this.currentEvent = event;
-
     this.state = 'event';
+
     document.getElementById('app').innerHTML = `
       <div class="screen event-screen">
         <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.16"></div>
@@ -2023,12 +1459,8 @@ class GameController {
           <h2>奇遇 · ${event.title}</h2>
           <p>${event.desc}</p>
           <div class="event-choices">
-            <button class="btn btn-primary" onclick="game.handleEvent('accept')">
-              ${event.choice}
-            </button>
-            <button class="btn btn-ghost" onclick="game.continueAfterBattle()">
-              拂袖而去
-            </button>
+            <button class="btn btn-primary" onclick="game.handleEvent('accept')">${event.choice}</button>
+            <button class="btn btn-ghost" onclick="game.continueAfterBattle()">拂袖而去</button>
           </div>
         </div>
       </div>
@@ -2040,39 +1472,20 @@ class GameController {
     const ev = this.currentEvent;
     if (action === 'accept' && ev) {
       switch (ev.effect) {
-        case 'buy': // 神秘商人：40 物资换随机装备
-          if (this.supply >= 40) {
-            this.supply -= 40;
-            const eq = this.rng.pick(EQUIPMENT);
-            this.equipment.push(eq);
-            alert(`获得装备：${eq.name}！`);
-          } else {
-            alert('物资不足，无法购买！');
-          }
+        case 'buy':
+          if (this.supply >= 40) { this.supply -= 40; this.equipment.push(this.rng.pick(EQUIPMENT)); this.toast('获得装备！'); }
+          else this.toast('物资不足');
           break;
-        case 'trade': // 流浪剑客：30 物资换装备
-          if (this.supply >= 30) {
-            this.supply -= 30;
-            const eq = this.rng.pick(EQUIPMENT);
-            this.equipment.push(eq);
-            alert(`获得装备：${eq.name}！`);
-          } else {
-            alert('物资不足，无法交易！');
-          }
+        case 'trade':
+          if (this.supply >= 30) { this.supply -= 30; this.equipment.push(this.rng.pick(EQUIPMENT)); this.toast('获得装备！'); }
+          else this.toast('物资不足');
           break;
-        case 'heal': // 草药园：恢复生命
-          this.hp = Math.min(this.maxHp, this.hp + 25);
-          alert('采集草药，生命恢复 +25！');
+        case 'heal':
+          this.hp = Math.min(this.maxHp, this.hp + 25); this.toast('生命恢复 +25');
           break;
-        case 'sacrifice': // 古老祭坛：献祭 10 生命换永久力量
-          if (this.hp > 10) {
-            this.hp -= 10;
-            this.powerBuff += 0.08;
-            alert('献祭生命，力量长存（永久增伤 +8%）！');
-          } else {
-            this.hp = Math.min(this.maxHp, this.hp + 15);
-            alert('命悬一线，祭坛反哺你些许生机（+15 生命）。');
-          }
+        case 'sacrifice':
+          if (this.hp > 10) { this.hp -= 10; this.powerBuff += 0.08; this.toast('献祭成功，力量+8%'); }
+          else { this.hp = Math.min(this.maxHp, this.hp + 15); this.toast('祭坛反哺 +15生命'); }
           break;
       }
     }
@@ -2084,46 +1497,77 @@ class GameController {
     const eq = this.rng.pick(EQUIPMENT);
     this.equipment.push(eq);
     this.supply += this.rng.nextInt(20, 40);
-    alert(`遗宝：获得「${eq.name}」与物资！`);
+    this.toast(`遗宝：获得「${eq.name}」与物资！`);
     this.continueAfterBattle();
   }
 
-  // ============ GAME OVER / VICTORY ============
+  // ============ STATS ============
 
-  showGameOver() {
-    this.state = 'game_over';
-    audio.playBgm('defeat');
-    setTimeout(() => audio.stopBgm(), 1500);
+  showStatsPanel() {
+    audio.playUiClick();
+    const char = this.character;
+    const cardCounts = {};
+    this.cards.forEach(cid => { cardCounts[cid] = (cardCounts[cid] || 0) + 1; });
 
-    const researchPoints = 18 + Math.floor(Object.values(this.proficiency).reduce((s, p) => s + p.xp, 0) / 4);
-
-    document.getElementById('app').innerHTML = `
-      <div class="screen gameover-screen">
-        <div class="panel defeat-panel">
-          <h2>折 戟</h2>
-          <div class="result-summary">
-            <div class="result-item">抵达层数：第 ${this.currentLayer + 1} 层</div>
-            <div class="result-item">击败敌人：${this.battleResult?.enemies?.filter(e=>!e.alive)?.length || 0}</div>
-            <div class="result-item">研究点：+${researchPoints}</div>
+    const panelHtml = `
+      <div class="stats-overlay" id="statsOverlay" onclick="game.closeStatsPanel()">
+        <div class="stats-panel" onclick="event.stopPropagation()">
+          <div class="stats-header">
+            <h2>${char.name} · 属性</h2>
+            <button class="btn btn-ghost btn-sm" onclick="game.closeStatsPanel()">✕</button>
           </div>
-          <div class="battle-log-summary">
-            <h3>战斗回顾</h3>
-            <div class="log-scroll">
-              ${(this.battleResult?.log || []).slice(-15).map(l => `<div class="log-line">${this._cleanLog(l)}</div>`).join('')}
+          <div class="stats-section">
+            <div class="stats-grid-3">
+              <div class="stat-card"><div class="stat-card-val">${this.hp}/${this.maxHp}</div><div class="stat-card-label">生命</div></div>
+              <div class="stat-card"><div class="stat-card-val">${this.supply}</div><div class="stat-card-label">物资</div></div>
+              <div class="stat-card"><div class="stat-card-val">${this.cards.length}张</div><div class="stat-card-label">牌组</div></div>
             </div>
+            ${this.signatureSword ? `<div class="sword-info"><span class="sword-name-tag">${this.signatureSword.name}</span> ${this.signatureSword.desc}</div>` : ''}
           </div>
-          <button class="btn btn-primary btn-block" onclick="game.showMenu()">
-            返回主菜单
-          </button>
-          <button class="btn btn-secondary btn-block" style="margin-top:8px" onclick="game.pickCharacter('${this.character.id}')">
-            再试一次
-          </button>
+          <div class="stats-section">
+            <h3>牌组详情</h3>
+            ${Object.entries(cardCounts).map(([cid, count]) => {
+              const cd = ALL_CARDS[cid];
+              if (!cd) return '';
+              return `<div class="skill-row">
+                <div class="skill-info-main">
+                  <div class="skill-name-row">
+                    <span class="skill-name">${cd.name}</span>
+                    <span class="skill-tag-sm">${cd.tags[0]}</span>
+                    <span class="skill-tag-sm">费${cd.energyCost}</span>
+                    ${count > 1 ? `<span class="skill-tag-sm">×${count}</span>` : ''}
+                  </div>
+                  <div class="skill-desc-sm">${cd.desc}</div>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+          ${this.equipment.length > 0 ? `
+          <div class="stats-section">
+            <h3>装备 (${this.equipment.length}件)</h3>
+            ${this.equipment.map(eq => `<div class="equip-item"><span class="equip-name">${eq.name}</span> <span class="equip-rarity ${eq.rarity}">${eq.rarity}</span><br><span class="equip-desc">${eq.desc}</span></div>`).join('')}
+          </div>` : ''}
         </div>
-      </div>
-    `;
+      </div>`;
+
+    const existing = document.getElementById('statsOverlay');
+    if (existing) existing.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'statsOverlay';
+    overlay.innerHTML = panelHtml;
+    document.body.appendChild(overlay);
+    document.getElementById('statsOverlay').onclick = function(e) {
+      if (e.target === this) game.closeStatsPanel();
+    };
   }
 
-  // ---- 章节通关 ----
+  closeStatsPanel() {
+    audio.playUiClick();
+    const overlay = document.getElementById('statsOverlay');
+    if (overlay) overlay.remove();
+  }
+
+  // ============ CHAPTER / VICTORY ============
 
   showChapterClear() {
     this.state = 'chapter_clear';
@@ -2135,16 +1579,13 @@ class GameController {
         <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.2"></div>
         <div class="panel victory-final-panel">
           <h2>${prevRegion.name} 踏破</h2>
-          <div class="victory-title">${prevRegion.bossName} 已被击败</div>
           <div class="result-summary">
             <div class="result-item">进入 ${nextRegion.name}</div>
-            <div class="result-item">敌人强度 ×${nextRegion.scale.toFixed(2)}</div>
             <div class="result-item">剩余生命：${this.hp}/${this.maxHp}</div>
             <div class="result-item">物资：${this.supply}</div>
+            <div class="result-item">牌组：${this.cards.length}张</div>
           </div>
-          <button class="btn btn-primary btn-block" onclick="game.nextChapter()">
-            进入 ${nextRegion.name}
-          </button>
+          <button class="btn btn-primary btn-block" onclick="game.nextChapter()">进入 ${nextRegion.name}</button>
         </div>
       </div>
     `;
@@ -2153,22 +1594,16 @@ class GameController {
   nextChapter() {
     audio.playUiClick();
     audio.stopBgm();
-    // 新章开局：恢复满血
     this.hp = this.maxHp;
     this.showRouteMap();
   }
-
-  // ---- 最终通关 ----
 
   showVictoryScreen() {
     this.state = 'game_over';
     audio.playBgm('victory');
     setTimeout(() => audio.stopBgm(), 1000);
 
-    const researchPoints = 35 + 18 * 2 + Math.floor(Object.values(this.proficiency).reduce((s, p) => s + p.xp, 0) / 4);
-
     const isFinalVictory = this.currentRegion >= REGIONS.length - 1;
-
     document.getElementById('app').innerHTML = `
       <div class="screen victory-screen">
         <div class="ink-bg" style="background-image:url('assets/bg_menu_fan_kuan.jpg');opacity:0.3"></div>
@@ -2179,27 +1614,62 @@ class GameController {
             <div class="result-item">抵达：第 ${this.currentRegion + 1} 章 · 第 ${this.currentLayer + 1} 层</div>
             <div class="result-item">剩余生命：${this.hp}/${this.maxHp}</div>
             <div class="result-item">物资：${this.supply}</div>
-            <div class="result-item">研究点：+${researchPoints}</div>
+            <div class="result-item">牌组：${this.cards.length}张</div>
             <div class="result-item">装备：${this.equipment.length} 件</div>
           </div>
-          <div class="result-character">
-            <div class="char-badge large">
-              ${this.character.glyph} ${this.character.name}
-              ${this.signatureSword ? ` · ${this.signatureSword.name}` : ''}
-            </div>
-          </div>
-          <button class="btn btn-primary btn-block" onclick="game.showMenu()">
-            返回主菜单
-          </button>
-          <button class="btn btn-secondary btn-block" style="margin-top:8px" onclick="game.selectCharacter()">
-            换个角色再战
-          </button>
+          <button class="btn btn-primary btn-block" onclick="game.showMenu()">返回主菜单</button>
+          <button class="btn btn-secondary btn-block" style="margin-top:8px" onclick="game.selectCharacter()">换个角色再战</button>
         </div>
       </div>
     `;
   }
+
+  showGameOver() {
+    this.state = 'game_over';
+    audio.playBgm('defeat');
+    setTimeout(() => audio.stopBgm(), 1500);
+
+    document.getElementById('app').innerHTML = `
+      <div class="screen gameover-screen">
+        <div class="panel defeat-panel">
+          <h2>折 戟</h2>
+          <div class="result-summary">
+            <div class="result-item">抵达层数：第 ${this.currentLayer + 1} 层</div>
+            <div class="result-item">牌组：${this.cards.length}张</div>
+          </div>
+          <button class="btn btn-primary btn-block" onclick="game.showMenu()">返回主菜单</button>
+          <button class="btn btn-secondary btn-block" style="margin-top:8px" onclick="game.pickCharacter('${this.character?.id || 'swordsman'}')">再试一次</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // ============ UTILS ============
+
+  toast(text) {
+    const el = document.createElement('div');
+    el.className = 'wl-toast';
+    el.textContent = text;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1600);
+  }
+
+  _showPileInfo() {
+    audio.playUiClick();
+    const core = this.battleCore;
+    if (!core) return;
+    this.toast(`抽牌堆:${core.drawPile.length} · 弃牌堆:${core.discardPile.length} · 消耗堆:${core.exhaustPile.length}`);
+  }
+
+  _shake(level) {
+    const arena = document.getElementById('battleArena');
+    if (!arena) return;
+    arena.classList.remove('shake-light', 'shake-standard', 'shake-heavy', 'shake-execute');
+    void arena.offsetWidth;
+    arena.classList.add(`shake-${level}`);
+    setTimeout(() => arena.classList.remove(`shake-${level}`), 560);
+  }
 }
 
 // Global instance
-GameController._fxSeq = 0;
 const game = new GameController();

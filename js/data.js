@@ -1,593 +1,479 @@
 // ============================================================
-// 织律 Weaveline - Game Data
-// Characters, Skills, Enemies, Equipment, Status Effects, Routes
+// 织律 Weaveline v1.4 - Game Data
+// 抽卡战斗重构：手牌/能量/牌堆/消耗堆/敌人意图
 // ============================================================
 
-// ---- 异常状态 (独立减益，不再有元素反应机制) ----
+// ---- 异常状态（独立结算，不参与元素反应） ----
 const STATUS = {
-  burn: {
-    id: 'burn', name: '灼烧', nameKey: '灼烧',
-    maxStacks: 10, decay: 1, decayTiming: 'round_end',
-    onTick: (stacks) => ({ type: 'damage', amount: stacks * 2, tags: ['dot', 'burn'] })
+  poison: {
+    id: 'poison', name: '中毒', nameKey: '中毒',
+    maxStacks: 30, decay: 1, decayTiming: 'owner_turn_end', bypassShield: true,
+    onTick: (stacks) => ({ type: 'damage', amount: stacks, bypassShield: true, tags: ['dot', 'poison'] })
   },
   armorBreak: {
     id: 'armorBreak', name: '破甲', nameKey: '破甲',
     maxStacks: 6, decay: 1, decayTiming: 'round_end',
-    onApply: (stacks) => ({ defPenalty: stacks * 3 })
+    onApply: (stacks) => ({ defPenaltyPerStack: 3 })
+  },
+  weak: {
+    id: 'weak', name: '虚弱', nameKey: '虚弱',
+    maxStacks: 3, decay: 1, decayTiming: 'round_end',
+    onApply: () => ({ damageDealtMult: 0.8 })
+  },
+  vulnerable: {
+    id: 'vulnerable', name: '易伤', nameKey: '易伤',
+    maxStacks: 3, decay: 1, decayTiming: 'round_end',
+    onApply: () => ({ damageTakenMult: 1.25 })
+  },
+  delay: {
+    id: 'delay', name: '延迟', nameKey: '延迟',
+    maxStacks: 2, decay: 1, decayTiming: 'round_end',
   }
 };
 
-// ---- Equipment ----
-// ---- 佩饰 (装备，契合剑圣/武圣的武侠主题) ----
+// ---- Equipment v1.4 ----
 const EQUIPMENT = [
-  // ============ 原有九件（机制装备，独立判定） ============
-  { id: 'eq_chixin_yu', name: '炽心玉', rarity: '普通', slot: 'accessory',
-    desc: '每回合首次造成伤害后，回复2点生命（心火温养，久战不疲）',
-    effect: { healOnDealDamage: 2 } },
-  { id: 'eq_huixin_yu', name: '会心玉', rarity: '普通', slot: 'accessory',
-    desc: '蓄势重击(heavy)额外造成35%伤害',
-    effect: { heavyBonus: 0.35 } },
-  { id: 'eq_guanjia_fu', name: '贯甲符', rarity: '稀有', slot: 'accessory',
-    desc: '对带有"破甲"状态的敌人，造成的伤害额外+25%',
-    effect: { vsArmorBreakBonus: 0.25 } },
-  { id: 'eq_zhoutian_huan', name: '周天环', rarity: '稀有', slot: 'special',
-    desc: '技能槽首位与末位视为相邻（连携贯通）',
-    effect: { loopSlot: true } },
-  { id: 'eq_wujian_tie', name: '悟剑帖', rarity: '稀有', slot: 'special',
-    desc: '每场战斗首次施展的招式，额外获得3点熟练',
-    effect: { firstCastBonus: 3 } },
-  { id: 'eq_dingxing_zhu', name: '定星珠', rarity: '稀有', slot: 'special',
-    desc: '基础权重最低的招式，权重+35%（弥补弱势）',
-    effect: { lowestWeightBonus: 0.35 } },
-  { id: 'eq_yinyang_jue', name: '阴阳珏', rarity: '史诗', slot: 'special',
-    desc: '相邻槽位标签不同时，该招式效果+8%',
-    effect: { oppositeTagBonus: 0.08 } },
-  { id: 'eq_lianxing_kou', name: '连星扣', rarity: '史诗', slot: 'special',
-    desc: '连出保护延至第3次连续后方触发；连续同招伤害+8%',
-    effect: { streakDelay: 3, streakDamageBonus: 0.08 } },
-  { id: 'eq_huifeng_jian', name: '回风鉴', rarity: '史诗', slot: 'special',
-    desc: '自动演绎威力+25%，但不再积攒熟练',
-    effect: { replayBonus: 0.25, noProficiency: true } },
+  // 主装置
+  { id: 'eq_poison_brace', name: '淬毒护腕', rarity: '普通', slot: 'main_device',
+    desc: '每回合首次造成直接攻击伤害时，对目标施加中毒2',
+    effect: { firstHitPoison: 2 } },
+  { id: 'eq_guard_mirror', name: '护心镜', rarity: '普通', slot: 'armor',
+    desc: '每场战斗第一回合开始获得8护盾',
+    effect: { firstTurnShield: 8 } },
+  { id: 'eq_feather_tassel', name: '轻羽剑穗', rarity: '普通', slot: 'accessory',
+    desc: '剑圣：每回合第一张费用0的牌打出后获得2护盾',
+    character: 'swordsman', effect: { zeroCostShield: 2 } },
+  { id: 'eq_iron_sandbag', name: '铁砂袋', rarity: '普通', slot: 'accessory',
+    desc: '武圣：重式命中后额外施加破甲1',
+    character: 'martialArtist', effect: { heavyArmorBreak: 1 } },
 
-  // ============ 普通 (10) ============
-  { id: 'eq_tiebushan', name: '铁布衫', rarity: '普通', slot: 'armor',
-    desc: '金钟罩体，受到的伤害减少8%',
-    effect: { dmgReduction: 0.08 } },
-  { id: 'eq_tunajue', name: '吐纳诀', rarity: '普通', slot: 'scroll',
-    desc: '每回合开始调息，回复3点生命',
-    effect: { hpRegenRound: 3 } },
-  { id: 'eq_lieshijin', name: '裂石劲', rarity: '普通', slot: 'fist',
-    desc: '吐劲碎石，造成的所有伤害+6%',
-    effect: { dmgMultAdd: 0.06 } },
-  { id: 'eq_ningshen', name: '凝神珠', rarity: '普通', slot: 'accessory',
-    desc: '心神凝定，连出保护延后1次方触发',
-    effect: { streakDelayAdd: 1 } },
-  { id: 'eq_hushenfu', name: '护身符', rarity: '普通', slot: 'talisman',
-    desc: '每场战斗首次受到的伤害减免50%',
-    effect: { firstHitShieldPct: 0.5 } },
-  { id: 'eq_qingshen', name: '轻身步', rarity: '普通', slot: 'boots',
-    desc: '身法轻灵，所有招式出手权重+10%',
-    effect: { allWeightMult: 0.10 } },
-  { id: 'eq_xuantiejie', name: '玄铁戒', rarity: '普通', slot: 'accessory',
-    desc: '玄铁压腕，蓄势重击伤害+20%',
-    effect: { heavyAdd: 0.20 } },
-  { id: 'eq_huichun', name: '回春丹', rarity: '普通', slot: 'consumable',
-    desc: '战前服丹，开局获得相当于8%生命的护盾',
-    effect: { startShieldPct: 0.08 } },
-  { id: 'eq_pozhang', name: '破障符', rarity: '普通', slot: 'talisman',
-    desc: '符破坚障，无视敌人10%防御',
-    effect: { ignoreDef: 0.10 } },
-  { id: 'eq_juqi', name: '聚气符', rarity: '普通', slot: 'talisman',
-    desc: '每回合自行聚气，蓄势+1',
-    effect: { momentumPerRound: 1 } },
+  // 稀有
+  { id: 'eq_training_manual', name: '训练手册', rarity: '稀有', slot: 'special',
+    desc: '每场战斗第一张有效打出的技能卡额外获得3熟练经验',
+    effect: { firstCastXpBonus: 3 } },
+  { id: 'eq_energy_jade', name: '回气玉', rarity: '稀有', slot: 'accessory',
+    desc: '若上回合结束时能量为0，下回合额外获得1能量（每战最多2次）',
+    effect: { energyOnEmpty: { amount: 1, maxPerBattle: 2 } } },
+  { id: 'eq_cycle_sheath', name: '轮转剑匣', rarity: '稀有', slot: 'accessory',
+    desc: '每次弃牌堆重洗进抽牌堆时获得1能量（每回合最多1次）',
+    effect: { energyOnReshuffle: { amount: 1, maxPerTurn: 1 } } },
+  { id: 'eq_poison_sac', name: '百毒囊', rarity: '稀有', slot: 'accessory',
+    desc: '每名敌人每场战斗第一次中毒结算后，不减少中毒层数',
+    effect: { firstPoisonNoDecay: true } },
 
-  // ============ 稀有 (10) ============
-  { id: 'eq_qixing', name: '七星步', rarity: '稀有', slot: 'boots',
-    desc: '踏罡步斗，每回合开始获得5%生命的护盾',
-    effect: { roundShieldPct: 0.05 } },
-  { id: 'eq_jiuzhuan', name: '九转丹', rarity: '稀有', slot: 'consumable',
-    desc: '九转还魂，每回合开始回复6点生命',
-    effect: { hpRegenRound: 6 } },
-  { id: 'eq_yufeng', name: '御风环', rarity: '稀有', slot: 'accessory',
-    desc: '御风之势，蓄势重击伤害+35%',
-    effect: { heavyAdd: 0.35 } },
-  { id: 'eq_pojun', name: '破军令', rarity: '稀有', slot: 'talisman',
-    desc: '破军当头，对生命高于70%的敌人伤害+20%',
-    effect: { vsHighHpAdd: 0.20 } },
-  { id: 'eq_hansha', name: '含沙射影', rarity: '稀有', slot: 'hidden',
-    desc: '袖中飞沙，攻击有20%几率使敌人破甲1层',
-    effect: { armorBreakOnHitChance: 0.20, armorBreakOnHitStacks: 1 } },
-  { id: 'eq_liuyun', name: '流云袖', rarity: '稀有', slot: 'accessory',
-    desc: '袖卷流云，所有招式出手权重+20%',
-    effect: { allWeightMult: 0.20 } },
-  { id: 'eq_longlin', name: '龙鳞甲', rarity: '稀有', slot: 'armor',
-    desc: '龙鳞护身，受到的伤害减少18%',
-    effect: { dmgReduction: 0.18 } },
-  { id: 'eq_dingshen', name: '定身符', rarity: '稀有', slot: 'talisman',
-    desc: '符定其身，连续同招伤害+12%',
-    effect: { streakDmgAdd: 0.12 } },
-  { id: 'eq_chiyan', name: '赤焰符', rarity: '稀有', slot: 'talisman',
-    desc: '赤焰附身，攻击有25%几率使敌人灼烧1层',
-    effect: { burnOnHitChance: 0.25, burnOnHitStacks: 1 } },
-  { id: 'eq_taixu', name: '太虚镜', rarity: '稀有', slot: 'accessory',
-    desc: '太虚照影，蓄势上限+1',
-    effect: { momentumMaxAdd: 1 } },
+  // 史诗
+  { id: 'eq_hidden_scabbard', name: '藏锋剑鞘', rarity: '史诗', slot: 'special',
+    desc: '剑圣：回合结束时随机保留1张未打出的剑气',
+    character: 'swordsman', effect: { retainRandomSwordQi: 1 } },
+  { id: 'eq_iron_wall_robe', name: '铁壁法衣', rarity: '史诗', slot: 'armor',
+    desc: '每回合第一次获得护盾时额外+30%；但该回合后续护盾效果-10%',
+    effect: { firstShieldBonus: 0.30, subsequentShieldPenalty: 0.10 } },
+  { id: 'eq_breaker_talisman', name: '破阵符', rarity: '史诗', slot: 'talisman',
+    desc: '首次把精英/Boss施加到破甲3层时，抽2张并获得1能量（每战1次）',
+    effect: { armorBreak3Bonus: { draw: 2, energy: 1, oncePerBattle: true } } },
+  { id: 'eq_breath_scroll', name: '残卷·换气诀', rarity: '史诗', slot: 'scroll',
+    desc: '每回合第一次主动弃牌时抽1张',
+    effect: { drawOnDiscard: { amount: 1, maxPerTurn: 1 } } },
 
-  // ============ 史诗 (10) ============
-  { id: 'eq_xuanyuan', name: '轩辕剑意', rarity: '史诗', slot: 'special',
-    desc: '轩辕剑意加身，造成的所有伤害+15%',
-    effect: { dmgMultAdd: 0.15 } },
-  { id: 'eq_panlong', name: '盘龙玉', rarity: '史诗', slot: 'accessory',
-    desc: '盘龙绕体，每回合开始获得8%生命的护盾',
-    effect: { roundShieldPct: 0.08 } },
-  { id: 'eq_qiankun', name: '乾坤袋', rarity: '史诗', slot: 'special',
-    desc: '纳乾吐坤，每回合开始回复10点生命',
-    effect: { hpRegenRound: 10 } },
-  { id: 'eq_fumo', name: '伏魔印', rarity: '史诗', slot: 'talisman',
-    desc: '伏魔镇邪，对破甲敌人伤害+35%',
-    effect: { vsArmorBreakAdd: 0.35 } },
-  { id: 'eq_jinghong', name: '惊鸿扇', rarity: '史诗', slot: 'accessory',
-    desc: '惊鸿一现，蓄势重击伤害+50%',
-    effect: { heavyAdd: 0.50 } },
-  { id: 'eq_xuanwu', name: '玄武甲', rarity: '史诗', slot: 'armor',
-    desc: '玄武镇北，受到的伤害减少25%',
-    effect: { dmgReduction: 0.25 } },
-  { id: 'eq_zidian', name: '紫电青霜', rarity: '史诗', slot: 'accessory',
-    desc: '紫电绕身，攻击有40%几率使敌人破甲2层',
-    effect: { armorBreakOnHitChance: 0.40, armorBreakOnHitStacks: 2 } },
-  { id: 'eq_hongchen', name: '红尘劫', rarity: '史诗', slot: 'special',
-    desc: '红尘勘破，对生命低于30%的敌人伤害+40%',
-    effect: { vsLowHpAdd: 0.40 } },
-  { id: 'eq_wushuang', name: '无双谱', rarity: '史诗', slot: 'special',
-    desc: '无双绝学，所有招式出手权重+30%',
-    effect: { allWeightMult: 0.30 } },
-  { id: 'eq_kunlun', name: '昆仑玉', rarity: '史诗', slot: 'accessory',
-    desc: '昆仑玉魄，首次受击完全化解，且开局获得10%生命护盾',
-    effect: { firstHitShieldPct: 1.0, startShieldPct: 0.10 } },
-
-  // ============ 神话 (10) — 仅击败每层最终首领掉落 ============
-  { id: 'eq_zhuxian', name: '诛仙剑', rarity: '神话', slot: 'special',
-    desc: '诛仙之锋，造成的所有伤害+30%',
-    effect: { dmgMultAdd: 0.30 } },
-  { id: 'eq_taiji', name: '太极图', rarity: '神话', slot: 'special',
-    desc: '太极生两仪，每回合回血15且获得10%生命护盾',
-    effect: { hpRegenRound: 15, roundShieldPct: 0.10 } },
-  { id: 'eq_jiutian', name: '九天玄女佩', rarity: '神话', slot: 'accessory',
-    desc: '玄女临凡，蓄势重击伤害+80%',
-    effect: { heavyAdd: 0.80 } },
-  { id: 'eq_pangu', name: '盘古斧意', rarity: '神话', slot: 'special',
-    desc: '盘古开天，无视敌人25%防御',
-    effect: { ignoreDef: 0.25 } },
-  { id: 'eq_nvwa', name: '女娲石', rarity: '神话', slot: 'special',
-    desc: '女娲补天，受到的伤害减少40%',
-    effect: { dmgReduction: 0.40 } },
-  { id: 'eq_donghuang', name: '东皇钟', rarity: '神话', slot: 'special',
-    desc: '东皇镇世，对破甲敌人伤害+60%',
-    effect: { vsArmorBreakAdd: 0.60 } },
-  { id: 'eq_kunlunjing', name: '昆仑镜', rarity: '神话', slot: 'special',
-    desc: '昆仑照影，攻击50%几率使敌人破甲2层并灼烧2层',
-    effect: { armorBreakOnHitChance: 0.50, armorBreakOnHitStacks: 2, burnOnHitChance: 0.50, burnOnHitStacks: 2 } },
-  { id: 'eq_shennong', name: '神农鼎', rarity: '神话', slot: 'special',
-    desc: '神农尝百草，每回合蓄势+2且回血12',
-    effect: { momentumPerRound: 2, hpRegenRound: 12 } },
-  { id: 'eq_fuxi', name: '伏羲琴', rarity: '神话', slot: 'special',
-    desc: '伏羲演八卦，所有招式权重+50%，连出保护延至第4次',
-    effect: { allWeightMult: 0.50, streakDelayAdd: 2 } },
-  { id: 'eq_hundun', name: '混沌青莲', rarity: '神话', slot: 'special',
-    desc: '混沌初开，造成的所有伤害+25%，且首次受击完全化解',
-    effect: { dmgMultAdd: 0.25, firstHitShieldPct: 1.0 } }
+  // 风险装备
+  { id: 'eq_split_vein_ring', name: '裂脉扳指', rarity: '史诗', slot: 'accessory',
+    desc: '所有攻击牌伤害+22%，但每回合第一张攻击牌费用+1',
+    effect: { attackDmgBonus: 0.22, firstAttackCostUp: 1 } },
 ];
 
-// ---- 名剑 (Signature Swords for 剑圣) ----
-// 每把名剑附一个大招（需 3 层剑意，释放后层数-1），不在技能池中，满层时由 UI 按钮触发。
+// ---- 名剑 v1.4 (剑圣专属) ----
 const SIGNATURE_SWORDS = [
   { id: 'sword_liuguang', name: '流光',
-    desc: '技能与上次不同效果+12%；连续3次不同+1剑意。大招：七剑归一，全体 15 伤害 ×5 段',
-    effect: { diffSkillBonus: 0.12, chain3Bonus: { swordIntent: 1 } },
+    desc: '每回合第一次连续打出3张不同名称的剑圣牌时，抽1张并获得4护盾',
+    effect: { type: 'chain3DiffBonus', draw: 1, shield: 4 },
     ultimate: {
-      id: 'ult_liuguang', name: '七剑归一', tag: '剑技·流光',
-      desc: '【需3层剑意】全体 15 伤害 ×5 段',
-      effects: [{ type: 'damage', base: 15, hits: 5, allEnemies: true }],
-      hitPreset: 'heavy', castSfx: 'sword_qi_bloom', impactSfx: 'sword_qi_bloom',
-      tier: 'custom', multiHit: true
+      id: 'ult_wanjian', name: '万剑归流',
+      effects: [
+        { type: 'damage', multiplier: 0.42, hits: 3, allEnemies: true },
+        { type: 'damage', multiplier: 1.20, hits: 1, targetMode: 'lowest_hp_pct', allEnemies: false }
+      ]
     }
   },
   { id: 'sword_jinghong', name: '惊鸿',
-    desc: '大招要求层数-1（2层即可）；大招伤害额外+20%。大招：惊鸿一瞥，单体 75 伤害',
-    effect: { ultimateCostReduce: 1, ultimateBonus: 0.20 },
+    desc: '每回合第一张剑气费用-1（最低0）；若原费用≥2，打出后抽1张（每回合1次）',
+    effect: { type: 'firstQiDiscounted', minCost: 0, drawIfCostGe2: true },
     ultimate: {
-      id: 'ult_jinghong', name: '惊鸿一瞥', tag: '剑气·惊鸿',
-      desc: '【需2层剑意（惊鸿）】单体 75 伤害',
-      effects: [{ type: 'damage', base: 75, hits: 1 }],
-      hitPreset: 'execute', castSfx: 'sword_qi_bloom', impactSfx: 'execute',
-      tier: 'custom'
+      id: 'ult_wanjian', name: '万剑归流',
+      effects: [
+        { type: 'damage', multiplier: 0.42, hits: 3, allEnemies: true },
+        { type: 'damage', multiplier: 1.20, hits: 1, targetMode: 'lowest_hp_pct' }
+      ]
     }
   },
   { id: 'sword_duanyue', name: '断岳',
-    desc: '每7次命中单体必暴+处决。大招：断岳一击，单体 55 伤害，对 <25% 生命敌人直接处决',
-    effect: { hitCount7: { critGuaranteed: true, executeThreshold: 0.18 } },
+    desc: '每回合第一张费用≥2的单体攻击伤害+35%；若击杀，获得1能量（每回合1次）',
+    effect: { type: 'firstCost2PlusAttackBonus', dmgBonus: 0.35, killEnergy: 1 },
     ultimate: {
-      id: 'ult_duanyue', name: '断岳一击', tag: '剑技·断岳',
-      desc: '【需3层剑意】单体 55 伤害，对 <25% 敌人处决',
-      effects: [{ type: 'damage', base: 55, hits: 1, execute: 0.25 }],
-      hitPreset: 'execute', castSfx: 'sword_qi_bloom', impactSfx: 'execute',
-      tier: 'custom'
+      id: 'ult_wanjian', name: '万剑归流',
+      effects: [
+        { type: 'damage', multiplier: 0.42, hits: 3, allEnemies: true },
+        { type: 'damage', multiplier: 1.20, hits: 1, targetMode: 'lowest_hp_pct' }
+      ]
     }
   },
   { id: 'sword_taichu', name: '太初',
-    desc: '开局自送1层剑意；低血量剑技额外+1点。大招：太虚归一，全队回 25% 生命 + 10% 护盾',
-    effect: { firstCombatStackFree: true, lowHpSwordBonus: { weightMult: 1.25, intentBonus: 1 }, lowHpThreshold: 0.40 },
+    desc: '每场战斗开始获得1剑意；每次释放大招后获得8护盾',
+    effect: { type: 'startWithIntent', intentBonus: 1, ultimateShield: 8 },
     ultimate: {
-      id: 'ult_taichu', name: '太虚归一', tag: '内功·太初',
-      desc: '【需3层剑意】回复最大生命 25%，获得 10% 护盾',
+      id: 'ult_wanjian', name: '万剑归流',
       effects: [
-        { type: 'heal', amount: 0.25 },
-        { type: 'shield', amount: 0.10 }
-      ],
-      hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none',
-      tier: 'custom'
+        { type: 'damage', multiplier: 0.42, hits: 3, allEnemies: true },
+        { type: 'damage', multiplier: 1.20, hits: 1, targetMode: 'lowest_hp_pct' }
+      ]
     }
   }
 ];
 
-// ---- Character Skills ----
-// 剑圣 (Swordsman) skills —— 伤害为具体数值（每 hit）
-// 剑意层数机制：0-3 层，每层 +10% 伤害。剑技命中后层数+1。三层满后可以释放"大招"（在 6 个普通技能之外的 3 个终极技能），释放后层数 -1。
-const SWORDSMAN_SKILLS = [
-  // ===================== 剑技（命中后 +1 层剑意） =====================
-  { id: 's_cloud_stab', name: '流云刺', category: 'sword_technique', tag: '剑技',
-    baseWeight: 120, cooldown: 0, target: 'lowest_hp',
-    desc: '造成 2 段 ×12 伤害；命中后剑意层数 +1',
-    effects: [{ type: 'damage', base: 12, hits: 2 }],
-    onHit: { swordIntent: 1 },
-    hitPreset: 'light', castSfx: 'blade_light', impactSfx: 'blade_light' },
+// ---- 剑圣技能卡 v1.4 (12张) ----
+const SWORDSMAN_CARDS = [
+  // ===== 剑技 =====
+  { id: 'ss_cloud_stab', name: '流云刺', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
+    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 0.65, hits: 2 }],
+    onCast: { resourceChange: { sword_intent: 1 } },
+    desc: '0.65×2段；+1剑意', hitPreset: 'light', castSfx: 'blade_light', impactSfx: 'blade_light' },
+  { id: 'ss_whirlwind', name: '回风斩', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
+    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.00, hits: 1 },
+      { type: 'gain_shield', amount: 5 },
+      { type: 'conditional', condition: 'last_card_was_qi', effects: [{ type: 'gain_shield', amount: 3 }] }
+    ],
+    onCast: { resourceChange: { sword_intent: 1 } },
+    desc: '1.00×＋5护盾；+1剑意；若上一张为剑气，护盾+3', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
+  { id: 'ss_swallow_return', name: '燕返', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
+    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: ['retain'],
+    effects: [{ type: 'damage', multiplier: 1.35, hits: 1 }],
+    onCast: { resourceChange: { sword_intent: 1 }, conditional: { condition: 'was_retained', damageBonus: 0.30 } },
+    desc: '1.35×；保留；+1剑意；跨回合保留后伤害+30%', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
+  { id: 'ss_moon_combo', name: '踏月连环', cardType: 'attack', energyCost: 2, roleCategory: 'sword_technique',
+    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 0.38, hits: 4 }],
+    onCast: { resourceChange: { sword_intent: 1 }, comboPerUnique: { bonus: 0.06 } },
+    desc: '0.38×4段；+1剑意；每打过不同名剑牌+6%总伤', hitPreset: 'standard', castSfx: 'blade_multi', impactSfx: 'blade_multi', multiHit: true },
+  { id: 'ss_forest_pierce', name: '穿林破影', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
+    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.15, hits: 1 },
+      { type: 'conditional', condition: 'target_hp_below_50', effects: [{ type: 'damage', multiplier: 0.65, hits: 1 }] }
+    ],
+    onCast: { resourceChange: { sword_intent: 1 } },
+    desc: '1.15×；目标<50%改为1.65×；+1剑意', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
+  { id: 'ss_reflect_sword', name: '折光回剑', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
+    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 0.90, hits: 1 },
+      { type: 'gain_shield', amount: 7 },
+      { type: 'conditional', condition: 'enemy_intent_is_attack', effects: [{ type: 'gain_shield', amount: 3 }] }
+    ],
+    onCast: { resourceChange: { sword_intent: 1 } },
+    desc: '0.90×＋7护盾；+1剑意；敌意图为攻击时护盾+3', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
 
-  { id: 's_whirlwind', name: '回风斩', category: 'sword_technique', tag: '剑技',
-    baseWeight: 105, cooldown: 0, target: 'random',
-    desc: '造成 18 伤害；若上次技能不同，再追加 8 伤害；命中后剑意层数 +1',
-    effects: [{ type: 'damage', base: 18, hits: 1 }],
-    chainBonus: { damage: 0.45, condition: 'different_skill' },
-    onHit: { swordIntent: 1 },
-    hitPreset: 'light', castSfx: 'blade_light', impactSfx: 'blade_light' },
+  // ===== 剑气 =====
+  { id: 'ss_green_edge_qi', name: '青锋剑气', cardType: 'attack', energyCost: 1, roleCategory: 'sword_qi',
+    tags: ['剑气'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.25, hits: 1 },
+      { type: 'conditional', condition: 'sword_intent_ge_2', effects: [{ type: 'damage', multiplier: 0.45, hits: 1 }] }
+    ],
+    desc: '1.25×；剑意≥2追加0.45×', hitPreset: 'standard', castSfx: 'sword_qi', impactSfx: 'sword_qi' },
+  { id: 'ss_river_qi', name: '横江剑气', cardType: 'attack', energyCost: 2, roleCategory: 'sword_qi',
+    tags: ['剑气'], targetMode: 'enemy_all', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 0.80, hits: 1, allEnemies: true },
+      { type: 'conditional', condition: 'sword_intent_eq_3', effects: [{ type: 'damage', multiplier: 1.05, hits: 1, allEnemies: true }] }
+    ],
+    desc: '全体0.80×；剑意=3时改为1.05×', hitPreset: 'standard', castSfx: 'sword_qi', impactSfx: 'sword_qi' },
+  { id: 'ss_hundred_step_sword', name: '百步飞剑', cardType: 'attack', energyCost: 2, roleCategory: 'sword_qi',
+    tags: ['剑气'], targetMode: 'enemy_single', pileKeywords: ['retain'],
+    effects: [
+      { type: 'damage', multiplier: 1.80, hits: 1 },
+      { type: 'conditional', condition: 'target_hp_below_25', effects: [{ type: 'damage', multiplier: 0.90, hits: 1 }] }
+    ],
+    desc: '1.80×；目标<25%时+50%伤害；保留', hitPreset: 'heavy', castSfx: 'sword_qi', impactSfx: 'sword_qi' },
+  { id: 'ss_sword_rain', name: '剑雨千寻', cardType: 'attack', energyCost: 2, roleCategory: 'sword_qi',
+    tags: ['剑气'], targetMode: 'enemy_all', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 0.32, hits: 3, allEnemies: true },
+      { type: 'conditional', condition: 'only_one_enemy', effects: [{ type: 'damage', multiplier: 0.36, hits: 5, allEnemies: true }] }
+    ],
+    desc: '全体0.32×3；仅1敌时0.36×5', hitPreset: 'light', castSfx: 'sword_qi', impactSfx: 'sword_qi', multiHit: true },
 
-  { id: 's_swallow_return', name: '燕返', category: 'sword_technique', tag: '剑技',
-    baseWeight: 85, cooldown: 1, target: 'highest_hp',
-    desc: '造成 25 伤害；若上一招为剑气，本次+9伤害；命中后剑意层数 +1',
-    effects: [{ type: 'damage', base: 25, hits: 1 }],
-    conditionBonus: { damage: 0.35, condition: 'last_skill_qi' },
-    onHit: { swordIntent: 1 },
-    hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
-
-  { id: 's_moon_combo', name: '踏月连环', category: 'sword_technique', tag: '剑技',
-    baseWeight: 70, cooldown: 1, target: 'random',
-    desc: '造成 4 段 ×7 伤害；每段独立判定暴击；命中后剑意层数 +1',
-    effects: [{ type: 'damage', base: 7, hits: 4, critPerHit: true }],
-    onHit: { swordIntent: 1 },
-    hitPreset: 'standard', castSfx: 'blade_multi', impactSfx: 'blade_multi', multiHit: true },
-
-  { id: 's_forest_pierce', name: '穿林破影', category: 'sword_technique', tag: '剑技',
-    baseWeight: 90, cooldown: 0, target: 'lowest_hp',
-    desc: '造成 20 伤害；目标生命<50%时再追击 11 伤害；命中后剑意层数 +1',
-    effects: [{ type: 'damage', base: 20, hits: 1 }],
-    executeBonus: { threshold: 0.50, chaseDamage: 0.55 },
-    onHit: { swordIntent: 1 },
-    hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
-
-  { id: 's_reflect_sword', name: '折光回剑', category: 'sword_technique', tag: '剑技',
-    baseWeight: 75, cooldown: 1, target: 'last_attacker',
-    desc: '造成 22 伤害；若上一轮受到伤害，本次+7伤害；命中后剑意层数 +1',
-    effects: [{ type: 'damage', base: 22, hits: 1 }],
-    revengeBonus: { damage: 0.30, condition: 'took_damage_last_round' },
-    onHit: { swordIntent: 1 },
-    hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
-
-  // ===================== 剑气（无成本、不增剑意） =====================
-  { id: 's_green_edge_qi', name: '青锋剑气', category: 'sword_qi', tag: '剑气',
-    baseWeight: 100, cooldown: 0, target: 'lowest_hp',
-    desc: '造成 35 伤害；单体高输出',
-    effects: [{ type: 'damage', base: 35, hits: 1 }],
-    hitPreset: 'standard',
-    castSfx: 'sword_qi', impactSfx: 'sword_qi' },
-
-  { id: 's_river_qi', name: '横江剑气', category: 'sword_qi', tag: '剑气',
-    baseWeight: 70, cooldown: 1, target: 'all_enemies',
-    desc: '全体 18 伤害',
-    effects: [{ type: 'damage', base: 18, hits: 1, allEnemies: true }],
-    hitPreset: 'standard',
-    castSfx: 'sword_qi', impactSfx: 'sword_qi' },
-
-  { id: 's_hundred_step_frost', name: '百步飞霜', category: 'sword_qi', tag: '剑气',
-    baseWeight: 55, cooldown: 2, target: 'lowest_hp',
-    desc: '造成 41 伤害；普通敌人<15%生命处决',
-    effects: [{ type: 'damage', base: 41, hits: 1, execute: 0.15 }],
-    hitPreset: 'heavy',
-    castSfx: 'sword_qi', impactSfx: 'sword_qi' },
-
-  { id: 's_sword_rain', name: '剑雨千寻', category: 'sword_qi', tag: '剑气',
-    baseWeight: 50, cooldown: 2, target: 'random',
-    desc: '随机目标 7 伤害 ×8 段',
-    effects: [{ type: 'damage', base: 7, hits: 8 }],
-    hitPreset: 'light',
-    castSfx: 'sword_qi', impactSfx: 'sword_qi', multiHit: true },
-
-  // ===================== 旧·绝技（不再依赖剑意，但保留强力效果） =====================
-  { id: 's_ten_thousand_swords', name: '万剑归流', category: 'sword_qi', tag: '剑气·绝技',
-    baseWeight: 28, cooldown: 4, target: 'random',
-    desc: '随机目标 8 伤害 ×6 段（不再消耗剑意；冷却4回合）',
-    effects: [{ type: 'damage', base: 8, hits: 6 }],
-    hitPreset: 'standard', sweetener: 'heavy',
-    castSfx: 'sword_qi_bloom', impactSfx: 'sword_qi_bloom',
-    tier: 'custom', multiHit: true },
-
-  { id: 's_one_sword_sky', name: '一剑开天', category: 'sword_technique', tag: '剑技·绝技',
-    baseWeight: 24, cooldown: 4, target: 'highest_hp',
-    desc: '造成 78 伤害，附带处决演出（不再依赖剑意；冷却4回合）',
-    effects: [{ type: 'damage', base: 78, hits: 1 }],
-    hitPreset: 'execute', sweetener: 'execute',
-    castSfx: 'sword_qi_bloom', impactSfx: 'execute',
-    tier: 'custom' },
-
-  // ========== 大招现在绑定在名剑上（见 SIGNATURE_SWORDS），不再作为普通技能 ==========
+  // ===== 技法/辅助 =====
+  { id: 'ss_hidden_edge', name: '藏锋式', cardType: 'technique', energyCost: 0, roleCategory: 'sword_qi',
+    tags: ['剑气'], targetMode: 'none', pileKeywords: ['exhaust'],
+    effects: [
+      { type: 'draw_cards', amount: 1 },
+      { type: 'modify_next_damage', tag: 'sword_qi', bonus: 0.25, duration: 'turn' }
+    ],
+    desc: '抽1张；本回合下一张剑气伤害+25%；消耗', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
+  { id: 'ss_one_sword_sky', name: '一剑开天', cardType: 'attack', energyCost: 3, roleCategory: 'sword_qi',
+    tags: ['剑气'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 3.20, hits: 1 },
+      { type: 'conditional', condition: 'ultimate_casted_this_turn', effects: [{ type: 'damage', multiplier: 4.30, hits: 1 }] }
+    ],
+    desc: '3.20×；本回合已释放大招→4.30×', hitPreset: 'execute', castSfx: 'sword_qi_bloom', impactSfx: 'execute' },
 ];
 
-// 武圣 (Martial Artist) skills —— 伤害为具体数值（每 hit）
-const MARTIALARTIST_SKILLS = [
-  { id: 'm_mountain_fist', name: '开山拳', category: 'fist', tag: '拳法',
-    baseWeight: 125, cooldown: 0, target: 'highest_hp',
-    desc: '造成 28 伤害；无复杂条件',
-    effects: [{ type: 'damage', base: 28, hits: 1 }],
-    hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
+// ---- 武圣技能卡 v1.4 (12张) ----
+const MARTIALARTIST_CARDS = [
+  // ===== 拳法 =====
+  { id: 'ms_mountain_fist', name: '开山拳', cardType: 'attack', energyCost: 1, roleCategory: 'fist',
+    tags: ['拳法'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 1.45, hits: 1 }],
+    onCast: { resourceChange: { momentum: 1.0 } },
+    desc: '1.45×；+1蓄势', hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
+  { id: 'ms_cannon_fist', name: '崩山炮拳', cardType: 'attack', energyCost: 2, roleCategory: 'fist',
+    tags: ['拳法'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 2.25, hits: 1 },
+      { type: 'conditional', condition: 'target_hp_above_70', effects: [{ type: 'damage', multiplier: 2.70, hits: 1 }] }
+    ],
+    onCast: { resourceChange: { momentum: 1.0 } },
+    desc: '2.25×；目标>70%→+20%；+1蓄势', hitPreset: 'heavy', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
+  { id: 'ms_chain_fist', name: '连环炮拳', cardType: 'attack', energyCost: 2, roleCategory: 'fist',
+    tags: ['拳法'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 0.68, hits: 3 }],
+    onCast: { resourceChange: { momentum: 1.0 }, heavyBonus: 0.15 },
+    desc: '0.68×3；重式时总倍率+15%；+1蓄势', hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy', multiHit: true },
+  { id: 'ms_armor_break_fist', name: '碎甲拳', cardType: 'attack', energyCost: 1, roleCategory: 'fist',
+    tags: ['拳法'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.15, hits: 1 },
+      { type: 'add_status', statusId: 'armorBreak', stacks: 2 }
+    ],
+    onCast: { resourceChange: { momentum: 1.0 } },
+    desc: '1.15×＋破甲2；+1蓄势', hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
+  { id: 'ms_overlord_fist', name: '霸王冲拳', cardType: 'attack', energyCost: 3, roleCategory: 'fist',
+    tags: ['拳法'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 3.35, hits: 1, executeThreshold: 0.12 }],
+    onCast: { resourceChange: { momentum: 1.0 }, heavyBonus: 0.25 },
+    desc: '3.35×；重式+25%并带处决；+1蓄势', hitPreset: 'execute', castSfx: 'fist_heavy', impactSfx: 'execute' },
 
-  { id: 'm_cannon_fist', name: '崩山炮拳', category: 'fist', tag: '拳法',
-    baseWeight: 80, cooldown: 1, target: 'highest_hp',
-    desc: '造成 39 伤害；目标生命>70%时+8伤害',
-    effects: [{ type: 'damage', base: 39, hits: 1 }],
-    conditionBonus: { damage: 0.20, condition: 'target_hp_above_70' },
-    hitPreset: 'heavy', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
+  // ===== 脚法 =====
+  { id: 'ms_ground_split_kick', name: '裂地踢', cardType: 'attack', energyCost: 1, roleCategory: 'kick',
+    tags: ['脚法'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.55, hits: 1 },
+      { type: 'conditional', condition: 'target_hp_below_50', effects: [{ type: 'damage', multiplier: 1.94, hits: 1 }] }
+    ],
+    onCast: { resourceChange: { momentum: 1.0 } },
+    desc: '1.55×；目标<50%→+25%；+1蓄势', hitPreset: 'standard', castSfx: 'kick_heavy', impactSfx: 'kick_heavy' },
+  { id: 'ms_sweep_kick', name: '扫堂腿', cardType: 'attack', energyCost: 2, roleCategory: 'kick',
+    tags: ['脚法'], targetMode: 'enemy_all', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 0.90, hits: 1, allEnemies: true },
+      { type: 'add_status', statusId: 'weak', stacks: 1, allEnemies: true }
+    ],
+    onCast: { resourceChange: { momentum: 1.0 } },
+    desc: '全体0.90×虚弱1；+1蓄势', hitPreset: 'standard', castSfx: 'kick_heavy', impactSfx: 'kick_heavy' },
+  { id: 'ms_chase_kick', name: '追命腿', cardType: 'attack', energyCost: 2, roleCategory: 'kick',
+    tags: ['脚法'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 2.10, hits: 1, executeThreshold: 0.12 },
+      { type: 'conditional', condition: 'target_hp_below_30', effects: [{ type: 'damage', multiplier: 3.05, hits: 1, executeThreshold: 0.12 }] }
+    ],
+    onCast: { resourceChange: { momentum: 1.0 } },
+    desc: '2.10×带处决；目标<30%→3.05×处决；+1蓄势', hitPreset: 'heavy', castSfx: 'kick_heavy', impactSfx: 'execute' },
+  { id: 'ms_sky_heavy_kick', name: '裂空重踢', cardType: 'attack', energyCost: 3, roleCategory: 'kick',
+    tags: ['脚法'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 2.95, hits: 1 }],
+    onCast: { resourceChange: { momentum: 1.0 }, heavyShield: 8 },
+    desc: '2.95×；重式时额外8护盾；+1蓄势', hitPreset: 'execute', castSfx: 'kick_heavy', impactSfx: 'execute' },
 
-  { id: 'm_chain_fist', name: '连环炮拳', category: 'fist', tag: '拳法',
-    baseWeight: 95, cooldown: 0, target: 'lowest_hp',
-    desc: '造成 3 段 ×13 伤害；三拳命中同一目标',
-    effects: [{ type: 'damage', base: 13, hits: 3 }],
-    hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy', multiHit: true },
-
-  { id: 'm_armor_break_fist', name: '碎甲拳', category: 'fist', tag: '拳法',
-    baseWeight: 85, cooldown: 1, target: 'highest_armor',
-    desc: '造成 26 伤害＋破甲2；若已破甲则改为约 50 伤害',
-    effects: [{ type: 'damage', base: 26, hits: 1 }],
-    applyStatus: { status: 'armorBreak', stacks: 2 },
-    armorBrokenBonus: { damage: 1.95 },
-    hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
-
-  { id: 'm_overlord_fist', name: '霸王冲拳', category: 'fist', tag: '拳法·绝技',
-    baseWeight: 32, cooldown: 3, target: 'highest_hp',
-    desc: '造成 56 伤害；重式时额外+14，并带处决',
-    effects: [{ type: 'damage', base: 56, hits: 1 }],
-    heavyBonus: { multiplier: 1.25, execute: true },
-    hitPreset: 'execute', sweetener: 'execute',
-    castSfx: 'fist_heavy', impactSfx: 'execute', tier: 'custom' },
-
-  { id: 'm_ground_split_kick', name: '裂地踢', category: 'kick', tag: '脚法',
-    baseWeight: 110, cooldown: 0, target: 'lowest_hp',
-    desc: '造成 30 伤害；目标<50%生命时+6伤害',
-    effects: [{ type: 'damage', base: 30, hits: 1 }],
-    conditionBonus: { damage: 0.20, condition: 'target_hp_below_50' },
-    hitPreset: 'standard', castSfx: 'kick_heavy', impactSfx: 'kick_heavy' },
-
-  { id: 'm_sweep_kick', name: '扫堂腿', category: 'kick', tag: '脚法',
-    baseWeight: 75, cooldown: 1, target: 'all_enemies',
-    desc: '全体 17 伤害；2+敌人时权重×1.4',
-    effects: [{ type: 'damage', base: 17, hits: 1, allEnemies: true }],
-    weightCondition: { multiplier: 1.4, condition: 'enemies_ge_2' },
-    hitPreset: 'standard', castSfx: 'kick_heavy', impactSfx: 'kick_heavy' },
-
-  { id: 'm_chase_kick', name: '追命腿', category: 'kick', tag: '脚法',
-    baseWeight: 65, cooldown: 1, target: 'lowest_hp',
-    desc: '造成 35 伤害，带处决',
-    effects: [{ type: 'damage', base: 35, hits: 1 }],
-    execute: true,
-    hitPreset: 'heavy', sweetener: 'execute',
-    castSfx: 'kick_heavy', impactSfx: 'execute' },
-
-  { id: 'm_sky_heavy_kick', name: '裂空重踢', category: 'kick', tag: '脚法·绝技',
-    baseWeight: 38, cooldown: 2, target: 'highest_hp',
-    desc: '造成 48 伤害；若为重式则本次暴击伤害额外+35%',
-    effects: [{ type: 'damage', base: 48, hits: 1 }],
-    heavyBonus: { critDamage: 0.35 },
-    hitPreset: 'execute', sweetener: 'execute',
-    castSfx: 'kick_heavy', impactSfx: 'execute', tier: 'custom' },
-
-  { id: 'm_hunyuan_force', name: '混元劲', category: 'inner_power', tag: '内功',
-    baseWeight: 70, cooldown: 3, target: 'self',
-    desc: '本场攻击效果+10%，最多3层；随后立即再抽拳/脚',
-    effects: [{ type: 'buff', buff: 'atkUp', amount: 0.10, maxStacks: 3 }],
-    chainAction: { type: 'fist_or_kick' },
-    hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
-
-  { id: 'm_golden_bell', name: '金钟劲', category: 'inner_power', tag: '内功',
-    baseWeight: 55, cooldown: 3, target: 'self',
-    desc: '获得最大生命15%护盾；随后立即再抽拳/脚',
-    effects: [{ type: 'shield', amount: 0.15 }],
-    chainAction: { type: 'fist_or_kick' },
-    hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
-
-  { id: 'm_overlord_qi', name: '霸王真气', category: 'inner_power', tag: '内功·绝技',
-    baseWeight: 30, cooldown: 4, target: 'self',
-    desc: '立即把蓄势补至3；本次随后抽到的拳/脚重式额外+35%',
-    effects: [{ type: 'set_momentum', amount: 3 }],
-    chainAction: { type: 'fist_or_kick', heavyBonus: 0.35 },
-    hitPreset: 'none', sweetener: 'heavy',
-    castSfx: 'inner_power', impactSfx: 'heavy_sweetener', tier: 'custom' }
+  // ===== 内功 =====
+  { id: 'ms_hunyuan_force', name: '混元劲', cardType: 'power', energyCost: 1, roleCategory: 'inner_power',
+    tags: ['内功'], targetMode: 'self', pileKeywords: ['exhaust'],
+    effects: [{ type: 'add_buff', buffId: 'hunyuan_power', stacks: 1, maxStacks: 3, value: 0.08 }],
+    desc: '本场拳/脚伤害+8%，最多3层；打出后离开牌堆', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
+  { id: 'ms_golden_bell', name: '金钟劲', cardType: 'technique', energyCost: 1, roleCategory: 'inner_power',
+    tags: ['内功'], targetMode: 'self', pileKeywords: [],
+    effects: [
+      { type: 'gain_shield', amount: 11 },
+      { type: 'conditional', condition: 'momentum_eq_3', effects: [{ type: 'set_keyword', keyword: 'retain', target: 'self' }] }
+    ],
+    desc: '11护盾；蓄势=3时获得保留', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
+  { id: 'ms_overlord_qi', name: '霸王真气', cardType: 'technique', energyCost: 0, roleCategory: 'inner_power',
+    tags: ['内功'], targetMode: 'self', pileKeywords: ['exhaust'],
+    effects: [
+      { type: 'resource_change', resourceId: 'momentum', delta: 2 },
+      { type: 'draw_cards', amount: 1 }
+    ],
+    desc: '蓄势+2，抽1张，消耗', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
 ];
 
-// ---- Characters ----
+// ---- Characters v1.4 ----
 const CHARACTERS = {
   swordsman: {
     id: 'swordsman', name: '剑圣', className: '剑圣', glyph: '剑', portrait: 'assets/char_swordsman.jpg',
-    maxHp: 95, atk: 23, skillSlots: 6,
-    startingSkills: ['s_cloud_stab', 's_whirlwind'],
-    skillPool: SWORDSMAN_SKILLS,
-    resource: { name: '剑意', key: 'swordIntent', max: 3, start: 0 },
+    maxHp: 68, atk: 12, baseEnergy: 3, baseDraw: 5, handLimit: 10,
+    startingCards: [
+      { cardId: 'ss_cloud_stab', count: 3 },
+      { cardId: 'ss_whirlwind', count: 2 },
+      { cardId: 'ss_green_edge_qi', count: 2 },
+      { cardId: 'ss_reflect_sword', count: 3 }
+    ],
+    cardPool: SWORDSMAN_CARDS,
+    resource: { name: '剑意', key: 'sword_intent', max: 3, start: 0, desc: '打出剑技+1，满3点亮大招' },
+    ultimate: {
+      id: 'ult_wanjian', name: '万剑归流',
+      desc: '对所有敌人造成0.42×3段；对生命最低的敌人追加1.20×',
+      effects: [
+        { type: 'damage', multiplier: 0.42, hits: 3, allEnemies: true },
+        { type: 'damage', multiplier: 1.20, hits: 1, targetMode: 'lowest_hp_pct' }
+      ],
+      hitPreset: 'execute', castSfx: 'sword_qi_bloom', impactSfx: 'execute'
+    },
     signatureChoices: SIGNATURE_SWORDS,
-    streakMultipliers: [{ after: 2, mult: 0.45 }],
     color: '#4FC3F7', bgColor: '#E1F5FE',
     description: '灵巧华丽，招式流动，剑气纵横'
   },
   martialArtist: {
     id: 'martialArtist', name: '武圣', className: '武圣', glyph: '武', portrait: 'assets/char_martial.jpg',
-    maxHp: 92, atk: 18, skillSlots: 6,
-    startingSkills: ['m_mountain_fist', 'm_ground_split_kick'],
-    skillPool: MARTIALARTIST_SKILLS,
-    resource: { name: '蓄势', key: 'momentum', max: 3, start: 0 },
-    streakMultipliers: [{ after: 2, mult: 0.60 }, { after: 3, mult: 0.30 }],
+    maxHp: 92, atk: 16, baseEnergy: 3, baseDraw: 5, handLimit: 10,
+    startingCards: [
+      { cardId: 'ms_mountain_fist', count: 3 },
+      { cardId: 'ms_ground_split_kick', count: 2 },
+      { cardId: 'ms_golden_bell', count: 3 },
+      { cardId: 'ms_hunyuan_force', count: 2 }
+    ],
+    cardPool: MARTIALARTIST_CARDS,
+    resource: { name: '蓄势', key: 'momentum', max: 3, start: 0, desc: '打出拳/脚+1，满3后下一拳/脚进入重式' },
     color: '#FF7043', bgColor: '#FBE9E7',
     description: '大开大合，以力破巧，拳脚重击'
   }
 };
 
-// ---- Enemies ----
-const ENEMIES = [
-  // Normal enemies
-  { id: 'e_fire_mage', glyph: '炎', color: '#e0704a', name: '炎术师', type: 'normal', maxHp: 35, defense: 3, speed: 4,
-    tags: ['高爆发', '状态'],
-    skills: [
-      { name: '火球术', weight: 60, damage: 8, status: { type: 'burn', stacks: 2 }, target: 'random' },
-      { name: '烈焰冲击', weight: 40, damage: 14, target: 'player', cooldown: 2 }
-    ] },
-  { id: 'e_water_priest', glyph: '潮', color: '#6a92ad', name: '潮汐祭司', type: 'normal', maxHp: 40, defense: 2, speed: 5,
-    tags: ['状态', '防御'],
-    skills: [
-      { name: '水弹', weight: 50, damage: 8, target: 'player' },
-      { name: '治愈', weight: 50, heal: 10, target: 'self_lowest', cooldown: 2 }
-    ] },
-  { id: 'e_lightning_beast', glyph: '雷', color: '#d8c060', name: '雷牙兽', type: 'normal', maxHp: 32, defense: 4, speed: 6,
-    tags: ['多敌'],
-    skills: [
-      { name: '电牙撕咬', weight: 55, damage: 11, target: 'player' },
-      { name: '放电', weight: 45, damage: 12, target: 'player', cooldown: 2 }
-    ] },
-  { id: 'e_iron_guard', glyph: '铁', color: '#9a9186', name: '铁甲守卫', type: 'normal', maxHp: 50, defense: 8, speed: 3,
-    tags: ['防御'],
-    skills: [
-      { name: '铁壁', weight: 40, buff: { def: 5, rounds: 2 }, target: 'self', cooldown: 3 },
-      { name: '重击', weight: 60, damage: 10, target: 'player' }
-    ] },
-  { id: 'e_shadow_blade', glyph: '影', color: '#9270a0', name: '影刃刺客', type: 'normal', maxHp: 28, defense: 2, speed: 8,
-    tags: ['高爆发'],
-    skills: [
-      { name: '暗影斩', weight: 55, damage: 11, target: 'player' },
-      { name: '毒刃', weight: 45, damage: 7, status: { type: 'burn', stacks: 1 }, target: 'player' }
-    ] },
-  { id: 'e_rock_golem', glyph: '岩', color: '#a08a68', name: '岩石魔像', type: 'normal', maxHp: 55, defense: 10, speed: 2,
-    tags: ['防御'],
-    skills: [
-      { name: '岩石投掷', weight: 70, damage: 8, target: 'player' },
-      { name: '硬化', weight: 30, buff: { def: 8, rounds: 2 }, target: 'self', cooldown: 3 }
-    ] },
-  { id: 'e_wind_blade', glyph: '风', color: '#7fb59a', name: '风刃武士', type: 'normal', maxHp: 38, defense: 3, speed: 7,
-    tags: ['多敌'],
-    skills: [
-      { name: '风之刃', weight: 60, damage: 8, target: 'player' },
-      { name: '旋风斩', weight: 40, damage: 6, target: 'player', hits: 2, cooldown: 2 }
-    ] },
-  { id: 'e_toxic_spider', glyph: '毒', color: '#8aa84f', name: '毒液蛛', type: 'normal', maxHp: 30, defense: 2, speed: 5,
-    tags: ['状态'],
-    skills: [
-      { name: '毒液喷射', weight: 50, damage: 5, status: { type: 'burn', stacks: 3 }, target: 'player' },
-      { name: '蛛网束缚', weight: 50, damage: 4, status: { type: 'armorBreak', stacks: 2 }, target: 'player' }
-    ] },
+// ---- 所有技能卡注册表 ----
+const ALL_CARDS = {};
+SWORDSMAN_CARDS.forEach(c => ALL_CARDS[c.id] = c);
+MARTIALARTIST_CARDS.forEach(c => ALL_CARDS[c.id] = c);
 
-  // Elite enemies
-  { id: 'e_elite_fire_lord', glyph: '焰', color: '#e0604a', name: '烈焰领主', type: 'elite', maxHp: 75, defense: 5, speed: 5,
-    tags: ['高爆发', '状态'],
-    skills: [
-      { name: '地狱火', weight: 50, damage: 12, status: { type: 'burn', stacks: 3 }, target: 'player' },
-      { name: '火焰新星', weight: 30, damage: 9, target: 'player', aoe: true, cooldown: 3 },
-      { name: '燃烧之触', weight: 20, damage: 7, status: { type: 'burn', stacks: 5 }, target: 'player', cooldown: 2 }
-    ] },
-  { id: 'e_elite_armor_king', glyph: '钢', color: '#b0a89c', name: '钢甲战王', type: 'elite', maxHp: 90, defense: 10, speed: 3,
+// ---- Enemies v1.4 ----
+const ENEMIES = [
+  { id: 'e_swift_raider', glyph: '迅', color: '#d88a5a', name: '迅袭者', type: 'normal', maxHp: 40, defense: 3,
+    tags: ['高爆发'],
+    intentPattern: [
+      { intent: 'attack', value: 2, damagePerHit: 6, hits: 2, tags: ['连续攻击'], weight: 70 },
+      { intent: 'attack', value: 1, damagePerHit: 14, hits: 1, tags: ['重击'], weight: 30 }
+    ]
+  },
+  { id: 'e_charged_archer', glyph: '蓄', color: '#6aad8a', name: '蓄能射手', type: 'normal', maxHp: 35, defense: 2,
+    tags: ['高爆发'],
+    intentPattern: [
+      { intent: 'attack', value: 1, damagePerHit: 8, hits: 1, tags: ['蓄力'], weight: 60 },
+      { intent: 'attack', value: 2, damagePerHit: 22, hits: 1, tags: ['爆发'], weight: 40, cooldown: 2 }
+    ]
+  },
+  { id: 'e_guard_unit', glyph: '护', color: '#9a9a8a', name: '护卫单元', type: 'normal', maxHp: 50, defense: 6,
     tags: ['防御'],
-    skills: [
-      { name: '毁灭重锤', weight: 45, damage: 11, target: 'player', cooldown: 1 },
-      { name: '铁壁防御', weight: 30, buff: { def: 10, rounds: 2 }, target: 'self', cooldown: 3 },
-      { name: '战吼', weight: 25, buff: { atk: 0.3, rounds: 3 }, target: 'self', cooldown: 3 }
-    ] },
+    intentPattern: [
+      { intent: 'attack', value: 1, damagePerHit: 9, hits: 1, tags: [], weight: 50 },
+      { intent: 'shield', value: 8, tags: ['护盾'], weight: 30, cooldown: 2 },
+      { intent: 'buff_ally', value: 6, shieldToAlly: true, tags: ['保护'], weight: 20, cooldown: 2 }
+    ]
+  },
+  { id: 'e_poison_blade', glyph: '毒', color: '#7aaa4a', name: '毒刃客', type: 'normal', maxHp: 38, defense: 2,
+    tags: ['中毒'],
+    intentPattern: [
+      { intent: 'attack', value: 1, damagePerHit: 10, hits: 1, tags: [], weight: 50 },
+      { intent: 'attack', value: 1, damagePerHit: 5, hits: 1, applyStatus: { statusId: 'poison', stacks: 4 }, tags: ['中毒'], weight: 50, cooldown: 1 }
+    ]
+  },
+
+  // Elite
+  { id: 'e_elite_blade_master', glyph: '刃', color: '#c0604a', name: '剑刃大师', type: 'elite', maxHp: 80, defense: 5,
+    tags: ['高爆发', '中毒'],
+    intentPattern: [
+      { intent: 'attack', value: 2, damagePerHit: 10, hits: 2, tags: ['连续攻击'], weight: 40 },
+      { intent: 'attack', value: 1, damagePerHit: 12, hits: 1, applyStatus: { statusId: 'poison', stacks: 3 }, tags: ['中毒'], weight: 30, cooldown: 1 },
+      { intent: 'shield', value: 10, tags: ['护盾'], weight: 15, cooldown: 3 },
+      { intent: 'attack', value: 1, damagePerHit: 20, hits: 1, tags: ['重击'], weight: 15, cooldown: 2 }
+    ]
+  },
+  { id: 'e_elite_iron_general', glyph: '将', color: '#b0a090', name: '铁甲将军', type: 'elite', maxHp: 100, defense: 8,
+    tags: ['防御'],
+    intentPattern: [
+      { intent: 'attack', value: 1, damagePerHit: 12, hits: 1, tags: [], weight: 40 },
+      { intent: 'shield', value: 15, tags: ['护盾'], weight: 25, cooldown: 2 },
+      { intent: 'buff', value: { defUp: 4 }, tags: ['强化'], weight: 20, cooldown: 3 },
+      { intent: 'attack', value: 1, damagePerHit: 18, hits: 1, tags: ['重击'], weight: 15, cooldown: 2 }
+    ]
+  },
 
   // Boss
-  { id: 'e_boss_dragon', glyph: '龙', color: '#c9a24b', name: '万律龙尊', type: 'boss', maxHp: 100, defense: 5, speed: 4,
+  { id: 'e_boss_dragon', glyph: '龙', color: '#c9a24b', name: '万律龙尊', type: 'boss', maxHp: 130, defense: 5,
     tags: ['Boss'],
-    skills: [
-      { name: '龙息', weight: 40, damage: 5, status: { type: 'burn', stacks: 3 }, target: 'player', aoe: true },
-      { name: '龙爪', weight: 30, damage: 7, target: 'player', cooldown: 1 },
-      { name: '龙鳞护体', weight: 15, buff: { def: 6, rounds: 2 }, heal: 10, target: 'self', cooldown: 3 },
-      { name: '龙威', weight: 15, damage: 4, debuff: { atk: -0.2, rounds: 2 }, target: 'player', aoe: true, cooldown: 3 }
+    intentPattern: [
+      { intent: 'attack', value: 1, damagePerHit: 8, hits: 2, applyStatus: { statusId: 'poison', stacks: 3 }, tags: ['中毒', '龙息'], weight: 35 },
+      { intent: 'attack', value: 1, damagePerHit: 14, hits: 1, tags: ['龙爪'], weight: 30, cooldown: 1 },
+      { intent: 'shield', value: 12, tags: ['龙鳞'], heal: 10, weight: 20, cooldown: 3 },
+      { intent: 'buff', value: { atkUp: 0.3 }, tags: ['龙威'], weight: 15, cooldown: 3 }
     ],
     phases: [
-      { hpThreshold: 0.5, skillUnlock: { name: '灭世龙啸', weight: 50, damage: 8, status: { type: 'burn', stacks: 4 }, target: 'player', aoe: true, cooldown: 3 } }
-    ] }
+      { hpThreshold: 0.5, skillUnlock: { intent: 'attack', value: 1, damagePerHit: 10, hits: 1, applyStatus: { statusId: 'poison', stacks: 5 }, tags: ['灭世龙啸'], weight: 40, cooldown: 2 } }
+    ]
+  }
 ];
 
-// ---- 大章节体系 ----
-// 4 个章节，每章 12 层 + Boss，逐章递增敌人强度
+// ---- 区域配置 v1.4 ----
 const REGIONS = [
-  { name: '风之章', bossName: '风啸龙尊', scale: 1.0 },
-  { name: '云之章', bossName: '云隐龙尊', scale: 1.25 },
-  { name: '雷之章', bossName: '雷殛龙尊', scale: 1.55 },
-  { name: '龙之章', bossName: '万律龙尊', scale: 1.90 }
+  { name: '风之章', bossName: '风啸龙尊', scale: 1.0, layers: 9, desc: '剑风初起' },
+  { name: '云之章', bossName: '云隐龙尊', scale: 1.25, layers: 9, desc: '云深不知处' }
 ];
 
 function regionScale(region) {
   return REGIONS[Math.min(region, REGIONS.length - 1)]?.scale || 1.0;
 }
 
-// ---- 敌人随层数强度倍率 ----
 function layerScale(layer) {
   if (layer <= 2) return 1.0;
   if (layer <= 5) return 1.15;
-  if (layer <= 8) return 1.30;
-  if (layer <= 10) return 1.50;
-  return 1.0; // boss: 在这层layerScale 返回 1，区域缩放另外处理
+  if (layer <= 7) return 1.30;
+  return 1.0;
 }
 
-// Generate default encountered enemies by layer
+// ---- 遭遇生成 v1.4 ----
 function generateEncounter(layer, seedRng, region = 0) {
   const rng = seedRng || new SeededRandom(Date.now());
   const regionMult = regionScale(region);
-  const isElite = rng.nextFloat() < 0.12 && layer >= 4;
-  const isBoss = layer >= 11;
+  const isElite = rng.nextFloat() < 0.10 && layer >= 3;
+  const isBoss = layer >= 8;
 
   if (isBoss) {
     const bossTmpl = ENEMIES.find(e => e.type === 'boss');
-    const regionName = REGIONS[region]?.name || '未知';
     const regionBossName = REGIONS[region]?.bossName || bossTmpl.name;
-    const bossMult = 1.0 + region * 0.12; // 章节 Boss 独立缩放（比小兵稍缓）
+    const bossMult = 1.0 + region * 0.12;
     return {
       type: 'boss',
       enemies: [{
-        ...bossTmpl,
+        ...bossTmpl, id: 'enemy_0',
         name: regionBossName,
         maxHp: Math.floor(bossTmpl.maxHp * bossMult),
         defense: Math.floor(bossTmpl.defense * bossMult),
-        skills: bossTmpl.skills.map(s => ({ ...s, damage: Math.floor((s.damage || 0) * bossMult) })),
-        phases: bossTmpl.phases?.map(p => ({
-          ...p,
-          skillUnlock: p.skillUnlock ? { ...p.skillUnlock, damage: Math.floor((p.skillUnlock.damage || 0) * bossMult) } : undefined
-        }))
+        intentPattern: bossTmpl.intentPattern.map(i => ({ ...i })),
+        phases: bossTmpl.phases?.map(p => ({ ...p }))
       }]
     };
   }
 
   if (isElite) {
     const elites = ENEMIES.filter(e => e.type === 'elite');
-    const pick = rng.pick(elites);
+    const pick = { ...rng.pick(elites) };
     const scale = layerScale(layer) * regionMult;
     return {
       type: 'elite',
       enemies: [{
-        ...pick,
+        ...pick, id: 'enemy_0',
         maxHp: Math.floor(pick.maxHp * scale),
         defense: Math.floor(pick.defense * scale),
-        skills: pick.skills.map(s => ({ ...s, damage: Math.floor((s.damage || 0) * scale) }))
+        intentPattern: pick.intentPattern.map(i => ({ ...i }))
       }]
     };
   }
@@ -599,28 +485,24 @@ function generateEncounter(layer, seedRng, region = 0) {
   const scale = layerScale(layer) * regionMult;
   for (let i = 0; i < count; i++) {
     const idx = rng.nextInt(0, pool.length - 1);
-    const p = pool[idx];
+    const p = { ...pool[idx] };
     selected.push({
-      ...p,
+      ...p, id: `enemy_${i}`,
       maxHp: Math.floor(p.maxHp * scale),
       defense: Math.floor(p.defense * scale),
-      skills: p.skills.map(s => ({ ...s, damage: Math.floor((s.damage || 0) * scale) }))
+      intentPattern: p.intentPattern.map(ip => ({ ...ip }))
     });
     pool.splice(idx, 1);
     if (pool.length === 0) break;
   }
-
   return { type: 'normal', enemies: selected };
 }
 
-// ---- Route Generation ----
+// ---- 路线生成 v1.4 ----
 function generateRouteMap(seed) {
   const rng = new SeededRandom(seed);
-  const layers = 12;  // 4 层更深的关卡（共 12 层，0-11）
+  const layers = 9; // 8层 + Boss
   const nodes = [];
-
-  // 在 4 个区域各确保 1 个 shop / rest / upgrade（4×3=12 保证节点在每区）
-  const nodeTypes = ['battle', 'battle', 'battle', 'battle', 'event', 'event', 'shop', 'upgrade', 'rest', 'treasure'];
 
   for (let layer = 0; layer < layers; layer++) {
     let count;
@@ -636,74 +518,36 @@ function generateRouteMap(seed) {
       } else if (layer < 2) {
         type = rng.pick(['battle', 'battle', 'battle', 'event']);
       } else {
-        type = rng.pick(nodeTypes);
+        const types = ['battle', 'battle', 'battle', 'event', 'event', 'shop', 'upgrade', 'rest', 'treasure'];
+        type = rng.pick(types);
       }
-
-      // Ensure minimum shop/rest/upgrade per region
-      const existing = nodes.flatMap(l => l.map(n => n.type));
-
-      layerNodes.push({
-        id: `node_${layer}_${i}`,
-        layer,
-        index: i,
-        type,
-        visited: false,
-        accessible: false
-      });
+      layerNodes.push({ id: `node_${layer}_${i}`, layer, index: i, type, visited: false, accessible: false });
     }
     nodes.push(layerNodes);
   }
 
-  // Ensure guaranteed nodes exist in each quarter (4 regions × 3 garantueed types)
+  // Ensure minimum services
   const allNodes = nodes.flat();
-  // 保证每 3 层至少 1 个 shop / rest / upgrade（12 层 ÷ 4 区 = 每区 3 层）
-  for (let region = 0; region < 4; region++) {
-    const regionNodes = allNodes.filter(n => n.layer >= region * 3 && n.layer < (region + 1) * 3 && n.layer > 0);
-    if (!regionNodes.some(n => n.type === 'shop')) {
-      const candidates = regionNodes.filter(n => n.layer < layers - 1 && !n.visited);
-      if (candidates.length > 0) rng.pick(candidates).type = 'shop';
-    }
-    if (!regionNodes.some(n => n.type === 'rest')) {
-      const candidates = regionNodes.filter(n => n.type !== 'shop' && !n.visited && n.layer < layers - 1);
-      if (candidates.length > 0) rng.pick(candidates).type = 'rest';
-    }
-    if (!regionNodes.some(n => n.type === 'upgrade')) {
-      const candidates = regionNodes.filter(n => n.type !== 'shop' && n.type !== 'rest' && !n.visited && n.layer < layers - 1);
-      if (candidates.length > 0) rng.pick(candidates).type = 'upgrade';
-    }
-  }
-  // 全局补位：万一有类型全缺
-  if (!allNodes.some(n => n.type === 'shop')) {
-    rng.pick(allNodes.filter(n => n.layer > 0 && n.layer < layers - 1)).type = 'shop';
-  }
-  if (!allNodes.some(n => n.type === 'rest')) {
-    rng.pick(allNodes.filter(n => n.layer > 0 && n.layer < layers - 1 && n.type !== 'shop')).type = 'rest';
-  }
-  if (!allNodes.some(n => n.type === 'upgrade')) {
-    rng.pick(allNodes.filter(n => n.layer > 0 && n.layer < layers - 1 && n.type !== 'shop' && n.type !== 'rest')).type = 'upgrade';
-  }
+  const midNodes = allNodes.filter(n => n.layer > 1 && n.layer < layers - 1);
+  if (!midNodes.some(n => n.type === 'shop')) { const c = midNodes.filter(n => n.type !== 'boss'); if (c.length) rng.pick(c).type = 'shop'; }
+  if (!midNodes.some(n => n.type === 'rest')) { const c = midNodes.filter(n => n.type !== 'shop' && n.type !== 'boss'); if (c.length) rng.pick(c).type = 'rest'; }
+  if (!midNodes.some(n => n.type === 'upgrade')) { const c = midNodes.filter(n => n.type !== 'shop' && n.type !== 'rest' && n.type !== 'boss'); if (c.length) rng.pick(c).type = 'upgrade'; }
 
-  // Generate connections: each node connects to 1-3 nodes in next layer
+  // Connections
   for (let layer = 0; layer < layers - 1; layer++) {
     const currentLayer = nodes[layer];
     const nextLayer = nodes[layer + 1];
-
-    // Ensure all next layer nodes are reachable
     const nextAssigned = new Set();
     for (const node of currentLayer) {
-      const connections = rng.nextInt(1, Math.min(3, nextLayer.length));
-      for (let c = 0; c < connections; c++) {
+      const connCount = rng.nextInt(1, Math.min(3, nextLayer.length));
+      if (!node.connections) node.connections = [];
+      for (let c = 0; c < connCount; c++) {
         const candidates = nextLayer.filter((_, i) => !nextAssigned.has(i));
         const target = candidates.length > 0 ? rng.pick(candidates) : rng.pick(nextLayer);
-        if (!node.connections) node.connections = [];
-        if (!node.connections.includes(target.id)) {
-          node.connections.push(target.id);
-        }
+        if (!node.connections.includes(target.id)) node.connections.push(target.id);
         nextAssigned.add(nextLayer.indexOf(target));
       }
     }
-
-    // Ensure all next layer nodes are connected
     for (let i = 0; i < nextLayer.length; i++) {
       if (!currentLayer.some(n => n.connections && n.connections.includes(nextLayer[i].id))) {
         rng.pick(currentLayer).connections.push(nextLayer[i].id);
@@ -711,13 +555,10 @@ function generateRouteMap(seed) {
     }
   }
 
-  // Mark first layer as accessible
   nodes[0].forEach(n => n.accessible = true);
-
   return { layers, nodes };
 }
 
-// Node type display info
 const NODE_TYPE_INFO = {
   battle: { name: '战斗', glyph: '战', color: '#e0604a' },
   elite: { name: '精英', glyph: '精', color: '#9270a0' },

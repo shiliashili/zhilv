@@ -245,6 +245,17 @@ class AudioSystem {
     if (!this.initialized) return;
 
     switch (type) {
+      // Card interaction
+      case 'card_draw': this._playCardDraw(); break;
+      case 'card_select': this._playCardSelect(); break;
+      case 'card_play': this._playCardPlay(); break;
+      case 'card_discard': this._playCardDiscard(); break;
+      case 'card_exhaust': this._playCardExhaust(); break;
+      case 'energy_spend': this._playEnergySpend(); break;
+      case 'intent_refresh': this._playIntentRefresh(); break;
+      case 'ultimate_ready': this._playUltimateReady(); break;
+      case 'ultimate_click': this._playUltimateClick(); break;
+      // Combat
       case 'blade_light': this._playBladeLight(); break;
       case 'blade_multi': this._playBladeMulti(); break;
       case 'sword_qi': this._playSwordQi(); break;
@@ -381,6 +392,95 @@ class AudioSystem {
 
   _playHit() {
     this._noiseBurst(0.05, 500, 2000, 'bandpass', 0.2);
+  }
+
+  // ===== Card SFX =====
+  _playCardDraw() {
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+    osc.frequency.linearRampToValueAtTime(1200, this.ctx.currentTime + 0.04);
+    gain.gain.setValueAtTime(0.08, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.1);
+  }
+
+  _playCardSelect() {
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(660, this.ctx.currentTime);
+    osc.frequency.linearRampToValueAtTime(900, this.ctx.currentTime + 0.03);
+    gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.08);
+  }
+
+  _playCardPlay() {
+    this._noiseBurst(0.06, 600, 1200, 'bandpass', 0.12);
+  }
+
+  _playCardDiscard() {
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(500, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(300, this.ctx.currentTime + 0.06);
+    gain.gain.setValueAtTime(0.06, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.08);
+  }
+
+  _playCardExhaust() {
+    this._noiseBurst(0.1, 200, 600, 'lowpass', 0.1);
+  }
+
+  _playEnergySpend() {
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(300, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(150, this.ctx.currentTime + 0.05);
+    gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.08);
+  }
+
+  _playIntentRefresh() {
+    this._noiseBurst(0.04, 200, 400, 'bandpass', 0.08);
+  }
+
+  _playUltimateReady() {
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1200, this.ctx.currentTime);
+    osc.frequency.linearRampToValueAtTime(2400, this.ctx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.2);
+    setTimeout(() => this._noiseBurst(0.08, 800, 1600, 'bandpass', 0.12), 100);
+  }
+
+  _playUltimateClick() {
+    this._noiseBurst(0.12, 40, 120, 'lowpass', 0.3);
+    setTimeout(() => this._playSwordQiBloom(), 50);
   }
 
   _playSkillSelect() {

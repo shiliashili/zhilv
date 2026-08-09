@@ -1,1291 +1,1197 @@
 // ============================================================
-// 织律 Weaveline - Battle Core Engine
-// Auto-combat simulation with weighted skill selection,
-// cooldowns, streak protection, status effects
+// 织律 Weaveline v1.4 - Battle Core
+// 卡牌驱动战斗：抽牌堆/手牌/弃牌堆/消耗堆/能量/敌人意图
 // ============================================================
 
-// 防御减伤常数：减伤率 = 防御 / (防御 + ARMOR_CONST)，平滑且高防收益递减
-const ARMOR_CONST = 20;
+const ARMOR_CONST = 15; // 防御减伤常数
 
 class BattleCore {
-  constructor(setup, rng) {
-    this.setup = setup; // { character, skills, equipment, signatureSword, enemies }
-    this.rng = rng;
-    this.skillRng = rng.fork('skill_select');
-    this.targetRng = rng.fork('target');
-    this.aiRng = rng.fork('enemy_ai');
+  constructor(setup, seed) {
+    this.setup = setup; // { character, cards, equipment, signatureSword, enemies, currentHp }
+    this.seed = seed;
+    this.rng = new SeededRandom(seed);
+    this.shuffleRng = this.rng.fork('shuffle');
+    this.reshuffleRng = this.rng.fork('reshuffle');
+    this.effectRng = this.rng.fork('effect');
+    this.aiRng = this.rng.fork('ai');
 
-    this.player = null;
-    this.enemies = [];
+    // Turn state
     this.round = 0;
-    this.phase = 'initializing';
-    this.events = [];
-    this.battleLog = [];
-    this.isPlayerVictory = false;
-    this.isDefeat = false;
-    this.pendingUpgrades = [];
+    this.phase = 'player_turn_start'; // player_turn_start | player_input | enemy_turn | victory | defeat
+    this.enemyActionIndex = 0;
+    this.enemyQueue = [];
 
-    // Player-specific resources
-    // 剑意二级制：swordIntent = 点数（0-3），swordIntentLevel = 层数（0-3）
-    // 每 3 点升 1 层，每层 +10% 伤害；3 层可放大招，释放后 level -1
-    this.swordIntent = 0;        // 当前剑意点数（3 点升 1 层）
-    this.swordIntentLevel = 0;   // 当前剑意层数（每层 +10% 伤害）
-    this.momentum = 0;           // 蓄势（武圣）
-    this.firstSwordStackFree = false; // For 太初：开战自送 1 层
-    this.totalHitsDealt = 0;
-    this.tookDamageLastRound = false;
+    // Card zones
+    this.drawPile = [];
+    this.hand = [];
+    this.discardPile = [];
+    this.exhaustPile = [];
+    this.powerZone = [];
+
+    // Card instances registry
+    this.cardInstances = {}; // { instanceId: { instanceId, cardId, upgrades, temporary, retainedThisTurn, costOverride } }
+
+    // Energy
+    this.energy = 3;
+    this.maxEnergy = 3;
+
+    // Player
+    this.maxHp = setup.character.maxHp;
+    this.hp = setup.currentHp != null ? Math.min(this.maxHp, Math.max(1, setup.currentHp)) : this.maxHp;
+    this.atk = setup.character.atk;
+    this.shield = 0;
+    this.alive = true;
+
+    // Resources
+    this.swordIntent = 0;
+    this.momentum = 0;
+
+    // Signature sword
+    this.signatureSword = setup.signatureSword || null;
+
+    // Intent tracking - MUST come before _initEnemies (which uses it)
+    this.enemyPlans = {}; // { enemyId: EnemyActionPlan }
+
+    // Enemies
+    this.enemies = [];
+    this._initEnemies();
 
     // Proficiency
-    this.proficiency = {};
+    this.proficiency = setup.proficiency || {};
+    this.pendingUpgrades = [];
 
-    // Streak tracking
-    this.streakState = { lastSkillId: null, consecutiveCount: 0 };
+    // Equipment
+    this.equipment = setup.equipment || [];
+    this._eqState = {};
 
     // Buffs
-    this.playerBuffs = {};
-    this.hasShield = 0;
+    this.buffs = {};
 
-    // Enemy buffs
-    this.enemyBuffs = {};
+    // Tracking
+    this.battleLog = [];
+    this.events = [];
+    this.cardsPlayedThisTurn = []; // cardIds
+    this.ultimateCastedThisTurn = false;
+    this.totalHitsDealt = 0;
+    this.uniqueCardsPlayedThisTurn = new Set();
 
-    // 装备效果状态追踪
+    // Equipment state
     this._eqState = {
-      chixinUsed: false,          // 炽心玉：本回合已回血
-      firstCastBonusUsed: false,  // 悟剑帖：已触发
-      firstHitUsed: false,        // 护身符/昆仑玉/混沌青莲：首次受击已化解
-      lastSkillTag: null,         // 阴阳珏：上一个技能标签
+      firstHitPoisonUsed: false,
+      energyOnEmptyUsed: 0,
+      energyOnReshuffleUsed: 0,
+      firstPoisonNoDecayUsed: {},
+      firstCastXpUsed: false,
+      drawOnDiscardUsed: false,
+      armorBreak3Used: false,
+      zeroCostShieldUsed: false,
+      firstShieldBonusUsed: false,
+      firstQiDiscounted: false,
+      firstCost2Attacked: false,
+      chain3DiffCount: 0,
+      chain3DiffCards: [],
     };
 
-    // 聚合所有已装备道具的数值效果
-    this._eq = this._aggregateEquipment();
+    // Generate initial deck and shuffle
+    this._generateDeck();
+    this._shuffleDrawPile();
 
-    // 奇遇「献祭」累计的永久增伤
-    if (this.setup.powerBuff) this._eq.dmgMultAdd += this.setup.powerBuff;
-
-    this._init();
-
-    // 太初：每场战斗开场自动获得 1 层剑意
-    const sigSwordEf = this.setup.signatureSword?.effect;
-    if (sigSwordEf?.firstCombatStackFree && this.setup.character.id === 'swordsman') {
-      this.swordIntentLevel = 1;
-      this._log('🌟 太初：开战自送 1 层剑意');
+    // Signature sword: 太初 starts with 1 intent
+    if (this.signatureSword && this.signatureSword.id === 'sword_taichu') {
+      this.swordIntent = 1;
+      this._log('🌟 太初：开战自送1点剑意');
     }
 
-    // 战前护盾（回春丹/昆仑玉/等）
-    if (this._eq.startShieldPct > 0) {
-      this.hasShield += Math.floor(this.player.maxHp * this._eq.startShieldPct);
+    // First turn shield (护心镜)
+    const guardMirror = this.equipment.find(e => e.id === 'eq_guard_mirror');
+    if (guardMirror) {
+      this.shield += 8;
+      this._log('🛡 护心镜：获得8护盾');
+    }
+
+    // Generate enemy intents
+    this._generateAllIntents();
+  }
+
+  // ---- INITIALIZATION ----
+
+  _generateDeck() {
+    let instanceCounter = 0;
+    // Use the player's actual deck (from setup.cards), not the character template
+    const deck = this.setup.cards || this.setup.deck || [];
+    for (const cardId of deck) {
+      const cardDef = ALL_CARDS[cardId];
+      if (!cardDef) continue;
+      const instanceId = `card_${instanceCounter++}`;
+      this.cardInstances[instanceId] = {
+        instanceId, cardId: cardId, temporary: false,
+        retainedThisTurn: false, costOverride: null,
+        costOverrideDuration: null, runtimeFlags: {}
+      };
+      this.drawPile.push(instanceId);
+      // Init proficiency if needed
+      if (!this.proficiency[cardId]) {
+        this.proficiency[cardId] = { xp: 0, level: 1 };
+      }
     }
   }
 
-  /** 聚合当前装备的数值效果，统一在战斗开始时计算一次 */
-  _aggregateEquipment() {
-    const eq = {
-      dmgMultAdd: 0, dmgReduction: 0, hpRegenRound: 0, roundShieldPct: 0,
-      startShieldPct: 0, allWeightMult: 0, heavyAdd: 0, ignoreDef: 0,
-      vsArmorBreakAdd: 0, vsHighHpAdd: 0, vsLowHpAdd: 0, streakDmgAdd: 0,
-      streakDelayAdd: 0, firstHitShieldPct: 0, momentumPerRound: 0, momentumMaxAdd: 0,
-      burnOnHitChance: 0, burnOnHitStacks: 0, armorBreakOnHitChance: 0, armorBreakOnHitStacks: 0
-    };
-    for (const e of (this.setup.equipment || [])) {
-      const ef = e.effect || {};
-      if (ef.dmgMultAdd) eq.dmgMultAdd += ef.dmgMultAdd;
-      if (ef.dmgReduction) eq.dmgReduction = Math.min(0.75, eq.dmgReduction + ef.dmgReduction);
-      if (ef.hpRegenRound) eq.hpRegenRound += ef.hpRegenRound;
-      if (ef.roundShieldPct) eq.roundShieldPct += ef.roundShieldPct;
-      if (ef.startShieldPct) eq.startShieldPct += ef.startShieldPct;
-      if (ef.allWeightMult) eq.allWeightMult += ef.allWeightMult;
-      if (ef.heavyAdd) eq.heavyAdd += ef.heavyAdd;
-      if (ef.ignoreDef) eq.ignoreDef = Math.min(0.5, eq.ignoreDef + ef.ignoreDef);
-      if (ef.vsArmorBreakAdd) eq.vsArmorBreakAdd += ef.vsArmorBreakAdd;
-      if (ef.vsHighHpAdd) eq.vsHighHpAdd += ef.vsHighHpAdd;
-      if (ef.vsLowHpAdd) eq.vsLowHpAdd += ef.vsLowHpAdd;
-      if (ef.streakDmgAdd) eq.streakDmgAdd += ef.streakDmgAdd;
-      if (ef.streakDelayAdd) eq.streakDelayAdd += ef.streakDelayAdd;
-      if (ef.firstHitShieldPct) eq.firstHitShieldPct = Math.max(eq.firstHitShieldPct, ef.firstHitShieldPct);
-      if (ef.momentumPerRound) eq.momentumPerRound += ef.momentumPerRound;
-      if (ef.momentumMaxAdd) eq.momentumMaxAdd += ef.momentumMaxAdd;
-      if (ef.burnOnHitChance) { eq.burnOnHitChance = Math.max(eq.burnOnHitChance, ef.burnOnHitChance); eq.burnOnHitStacks = Math.max(eq.burnOnHitStacks, ef.burnOnHitStacks || 1); }
-      if (ef.armorBreakOnHitChance) { eq.armorBreakOnHitChance = Math.max(eq.armorBreakOnHitChance, ef.armorBreakOnHitChance); eq.armorBreakOnHitStacks = Math.max(eq.armorBreakOnHitStacks, ef.armorBreakOnHitStacks || 1); }
-    }
-    return eq;
+  _shuffleDrawPile() {
+    this.drawPile = this.shuffleRng.shuffle([...this.drawPile]);
   }
 
-  _momentumMax() {
-    return 3 + (this._eq?.momentumMaxAdd || 0);
-  }
-
-  _init() {
-    const charDef = this.setup.character;
-    const currentHp = (this.setup.currentHp != null) ? this.setup.currentHp : charDef.maxHp;
-    this.player = {
-      id: 'player',
-      name: charDef.name,
-      maxHp: charDef.maxHp,
-      hp: Math.min(charDef.maxHp, Math.max(1, currentHp)),
-      atk: charDef.atk || 15,
-      defense: 0,
-      speed: 5,
-      alive: true,
-      faction: 'player',
-      skillSlots: [...this.setup.skills],
-      displayOrder: 0
-    };
-
-    // Initialize proficiency
-    this.player.skillSlots.forEach(s => {
-      this.proficiency[s.id] = { xp: 0, level: 1 };
-    });
-
-    // Initialize enemies
-    this.setup.enemies.forEach((enemy, i) => {
+  _initEnemies() {
+    this.setup.enemies.forEach((enemyDef, i) => {
       this.enemies.push({
         id: `enemy_${i}`,
-        name: enemy.name,
-        maxHp: enemy.maxHp,
-        hp: enemy.maxHp,
-        defense: enemy.defense || 0,
-        speed: enemy.speed || 4,
+        name: enemyDef.name,
+        maxHp: enemyDef.maxHp,
+        hp: enemyDef.maxHp,
+        defense: enemyDef.defense || 0,
         alive: true,
-        faction: 'enemy',
-        definition: enemy,
+        definition: enemyDef,
+        statuses: {},
         cooldowns: {},
+        shield: 0,
         displayOrder: i,
-        phases: enemy.phases ? [...enemy.phases] : []
+        phases: enemyDef.phases ? JSON.parse(JSON.stringify(enemyDef.phases)) : [],
+        _originalDefense: enemyDef.defense || 0,
       });
-      this.enemyBuffs[`enemy_${i}`] = { damageTakenMult: 1, nextActionWeaken: 0 };
+      this.enemyPlans[`enemy_${i}`] = null;
     });
   }
 
-  // ============ PUBLIC API ============
+  // ---- DRAW SYSTEM ----
 
-  /** Run battle to completion, return all events */
-  runToEnd(maxRounds = 100) {
-    while (!this.isDefeat && !this.isPlayerVictory && this.round < maxRounds) {
-      this._executeRound();
-    }
-    return {
-      events: this.events,
-      log: this.battleLog,
-      victory: this.isPlayerVictory,
-      defeat: this.isDefeat,
-      rounds: this.round,
-      player: this.player,
-      enemies: this.enemies,
-      proficiency: this.proficiency
-    };
-  }
-
-  /** Execute one round */
-  step() {
-    if (this.isDefeat || this.isPlayerVictory) return null;
-    this._executeRound();
-    return {
-      phase: this.phase,
-      events: this.events.slice(-20),
-      player: this.player,
-      enemies: this.enemies
-    };
-  }
-
-  // ============ MANUAL BATTLE API ============
-
-  /** 手动模式：仅初始化，不自动执行 */
-  startManual() {
-    this.round = 0;
-    this._nextAction = null;
-  }
-
-  /** 回合开始（冷却、状态、buff） */
-  beginRound() {
-    this.round++;
-    this.phase = 'round_start';
-    this._log(`--- 第 ${this.round} 回合开始 ---`);
-    this._cooldownTick();
-    this._statusTick('round_start');
-    this._processBuffs();
-  }
-
-  /** 玩家选择技能后执行 */
-  playSkill(skill) {
-    if (this.isDefeat || this.isPlayerVictory) return this.isBattleOver();
-    this.phase = 'selecting_player_skill';
-    this._log(`🎯 选择技能: ${skill.name}`);
-
-    // Update streak
-    if (this.streakState.lastSkillId === skill.id) {
-      this.streakState.consecutiveCount++;
-    } else {
-      this.streakState.lastSkillId = skill.id;
-      this.streakState.consecutiveCount = 1;
-    }
-
-    this._addEvent('skill_cast', { skill, weight: skill.baseWeight, streak: this.streakState.consecutiveCount });
-
-    // Check if signature sword buff applies
-    if (this.setup.signatureSword) {
-      this._applySignatureSword(this.setup.signatureSword, skill);
-    }
-
-    this._executePlayerSkill(skill);
-    // 链式内功：自动追打拳/脚
-    if (skill.chainAction) {
-      this._chainAction = skill;
-      this._executeChainAction();
-      this._chainAction = null;
-    }
-    // 检查是否触发胜利/失败
-    this._checkEndConditions();
-    return this.isBattleOver();
-  }
-
-  /** 执行本轮所有敌人行动 */
-  playEnemies() {
-    if (this.isDefeat || this.isPlayerVictory) return this.isBattleOver();
-    this.phase = 'resolving_enemies';
-    const aliveEnemies = this.enemies.filter(e => e.alive);
-    aliveEnemies.sort((a, b) => b.speed - a.speed);
-    for (const enemy of aliveEnemies) {
-      if (this.isDefeat || this.isPlayerVictory) break;
-      this._enemyAction(enemy);
-    }
-    this._checkEndConditions();
-    return this.isBattleOver();
-  }
-
-  /** 回合结束处理 */
-  endRound() {
-    if (this.isDefeat || this.isPlayerVictory) return this.isBattleOver();
-    this.phase = 'round_end';
-    this._statusTick('round_end');
-    this._processBuffs();
-    this._log(`--- 第 ${this.round} 回合结束 ---`);
-    this._checkEndConditions();
-    return this.isBattleOver();
-  }
-
-  _checkEndConditions() {
-    if (this.player.hp <= 0) {
-      this.player.hp = 0;
-      this.player.alive = false;
-      this.isDefeat = true;
-      this.phase = 'defeat';
-      this._addEvent('defeat', {});
-    }
-    if (this.enemies.every(e => !e.alive)) {
-      this.isPlayerVictory = true;
-      this.phase = 'victory';
-      this._addEvent('victory', {});
-    }
-  }
-
-  /** 获取可用技能（不在冷却中） */
-  getAvailableSkills() {
-    return this.player.skillSlots.filter(s => {
-      const cd = this._getCooldown(s.id);
-      if (cd > 0) return false;
-      // 大招层数门禁
-      if (s.requireSwordIntent) {
-        let required = s.requireSwordIntent;
-        const sigSwordEf = this.setup.signatureSword?.effect;
-        if (sigSwordEf?.ultimateCostReduce) required = Math.max(1, required - sigSwordEf.ultimateCostReduce);
-        if (this.swordIntentLevel < required) return false;
+  _drawCards(count) {
+    const drawn = [];
+    for (let i = 0; i < count; i++) {
+      // Reshuffle if needed
+      if (this.drawPile.length === 0) {
+        if (this.discardPile.length === 0) break;
+        this._reshuffle();
       }
-      return true;
-    });
-  }
+      if (this.drawPile.length === 0) break;
 
-  /** 从可用技能中随机抽取 count 张卡 */
-  drawHand(count = 4) {
-    const available = this.getAvailableSkills();
-    const shuffled = this.skillRng.shuffle([...available]);
-    return shuffled.slice(0, Math.min(count, shuffled.length));
-  }
+      const cardId = this.drawPile.shift();
 
-  /** 是否可以释放大招（剑圣专用） */
-  canUltimate() {
-    if (!this.setup.signatureSword?.ultimate) return false;
-    let required = 3;
-    const sigSwordEf = this.setup.signatureSword.effect;
-    if (sigSwordEf?.ultimateCostReduce) required = Math.max(1, required - sigSwordEf.ultimateCostReduce);
-    return this.swordIntentLevel >= required;
-  }
-
-  /** 释放名剑大招（层数 -1） */
-  playUltimate() {
-    if (!this.canUltimate()) return { ok: false };
-    const sword = this.setup.signatureSword;
-    const ultimate = sword.ultimate;
-    const before = this.swordIntentLevel;
-    this.swordIntentLevel = Math.max(0, this.swordIntentLevel - 1);
-    this._log(`⚔️ ${ultimate.name}！剑意层数 ${before} → ${this.swordIntentLevel}`);
-    this._executePlayerSkill(ultimate);
-    this._checkEndConditions();
-    return this.isBattleOver();
-  }
-
-  /** 返回对外状态（供 UI 渲染） */
-  getBattleState() {
-    return {
-      round: this.round,
-      player: {
-        hp: this.player.hp,
-        maxHp: this.player.maxHp,
-        atk: this.player.atk,
-        hasShield: this.hasShield,
-        alive: this.player.alive
-      },
-      enemies: this.enemies.map(e => ({
-        id: e.id,
-        name: e.name,
-        hp: e.hp,
-        maxHp: e.maxHp,
-        defense: e.defense,
-        alive: e.alive,
-        type: e.definition?.type || 'normal',
-        color: e.definition?.color || '#b8a684'
-      })),
-      swordIntent: this.swordIntent,
-      swordIntentLevel: this.swordIntentLevel,
-      momentum: this.momentum,
-      log: [...this.battleLog],
-      phase: this.phase
-    };
-  }
-
-  /** 战斗是否结束 */
-  isBattleOver() {
-    return {
-      isOver: this.isDefeat || this.isPlayerVictory,
-      victory: this.isPlayerVictory,
-      defeat: this.isDefeat,
-      player: this.player,
-      enemies: this.enemies,
-      proficiency: this.proficiency,
-      pendingUpgrades: [...this.pendingUpgrades],
-      log: this.battleLog,
-      rounds: this.round,
-      events: this.events
-    };
-  }
-
-  // ============ ROUND EXECUTION (AUTO) ============
-
-  _executeRound() {
-    this.round++;
-    this.phase = 'round_start';
-    this._log(`--- 第 ${this.round} 回合开始 ---`);
-
-    // Process round-start status ticks
-    this._cooldownTick();
-    this._statusTick('round_start');
-    this._processBuffs();
-
-    // Player auto-action
-    this.phase = 'selecting_player_skill';
-    this._playerAutoAction();
-
-    if (this.isDefeat || this.isPlayerVictory) return;
-
-    // Enemy actions
-    this.phase = 'resolving_enemies';
-    const aliveEnemies = this.enemies.filter(e => e.alive);
-    aliveEnemies.sort((a, b) => b.speed - a.speed);
-    for (const enemy of aliveEnemies) {
-      if (this.isDefeat || this.isPlayerVictory) return;
-      this._enemyAction(enemy);
-    }
-
-    // Round end processing
-    this.phase = 'round_end';
-    this._statusTick('round_end');
-    this._processBuffs();
-
-    this._log(`--- 第 ${this.round} 回合结束 ---`);
-
-    // Check defeat after round end
-    if (this.player.hp <= 0) {
-      this.player.hp = 0;
-      this.player.alive = false;
-      this.isDefeat = true;
-      this.phase = 'defeat';
-      this._addEvent('defeat', {});
-    }
-
-    // Check victory
-    if (this.enemies.every(e => !e.alive)) {
-      this.isPlayerVictory = true;
-      this.phase = 'victory';
-      this._addEvent('victory', {});
-    }
-  }
-
-  // ============ PLAYER AUTO ACTION ============
-
-  _playerAutoAction() {
-    // Check for internal skill chains (武圣 内功)
-    if (this._chainAction) {
-      this._executeChainAction();
-      return;
-    }
-
-    // Collect available skills
-    const available = this.player.skillSlots.filter(s => {
-      const cooldown = this._getCooldown(s.id);
-      return cooldown <= 0;
-    });
-
-    // 大招剑意层数门禁：层数不够时将权重视为 0（强制不抽中）
-    // 见 _pickSkill 中的 weight 调整
-
-    if (available.length === 0) {
-      this._log('所有技能冷却中，使用基础攻击');
-      this._basicAttack();
-      return;
-    }
-
-    // Calculate effective weights
-    const weighted = available.map(s => {
-      let w = s.baseWeight;
-
-      // 定星珠：最低基础权重技能权重+35%
-      if (this.setup.equipment?.some(e => e.id === 'eq_dingxing_zhu')) {
-        const allSlots = this.player.skillSlots;
-        const minWeight = Math.min(...allSlots.map(s2 => s2.baseWeight));
-        if (s.baseWeight === minWeight) w *= 1.35;
+      // Hand limit check
+      if (this.hand.length >= this.setup.character.handLimit) {
+        this.discardPile.push(cardId);
+        this._addEvent('card_overdraw', { cardInstanceId: cardId });
+        continue;
       }
 
-      // 轻身步/流云袖/无双谱/伏羲琴：所有招式权重加成
-      if (this._eq.allWeightMult > 0) w *= (1 + this._eq.allWeightMult);
+      this.hand.push(cardId);
+      drawn.push(cardId);
+      this._addEvent('card_drawn', { cardInstanceId: cardId });
+    }
+    return drawn;
+  }
 
-      // 武圣 condition: sweep kick weight bonus for 2+ enemies
-      if (s.weightCondition) {
-        const aliveEnemies = this.enemies.filter(e => e.alive).length;
-        if (s.weightCondition.condition === 'enemies_ge_2' && aliveEnemies >= 2) {
-          w *= s.weightCondition.multiplier;
+  _reshuffle() {
+    if (this.discardPile.length === 0) return;
+    this.drawPile = this.reshuffleRng.shuffle([...this.discardPile]);
+    this.discardPile = [];
+    this._addEvent('discard_reshuffled', {});
+    this._log('🔄 弃牌堆重洗入抽牌堆');
+
+    // 轮转剑匣：重洗获得1能量
+    const cycleSheath = this.equipment.find(e => e.id === 'eq_cycle_sheath');
+    if (cycleSheath && this._eqState.energyOnReshuffleUsed < 1) {
+      this._eqState.energyOnReshuffleUsed++;
+      this.energy = Math.min(this.maxEnergy, this.energy + 1);
+      this._log('⚡ 轮转剑匣：重洗获得1能量');
+    }
+  }
+
+  // ---- PLAYER COMMANDS ----
+
+  /** Play a card from hand */
+  playCard(cardInstanceId, targetIds = []) {
+    if (this.phase !== 'player_input') return { accepted: false, reason: '非玩家输入阶段' };
+    if (!this.hand.includes(cardInstanceId)) return { accepted: false, reason: '卡牌不在手牌中' };
+
+    const cardInst = this.cardInstances[cardInstanceId];
+    const cardDef = ALL_CARDS[cardInst.cardId];
+    if (!cardDef) return { accepted: false, reason: '卡牌定义不存在' };
+
+    // Calculate final cost
+    const finalCost = this._calcCost(cardInst, cardDef);
+    if (this.energy < finalCost) return { accepted: false, reason: '能量不足' };
+
+    // Validate targets
+    const tMode = cardDef.targetMode;
+    if (tMode === 'enemy_single' && targetIds.length !== 1) {
+      // Single enemy needs 1 target
+      const aliveEnemies = this.enemies.filter(e => e.alive);
+      if (cardDef.name === '折光回剑' || cardDef.name === '回风斩' || cardDef.name === '流云刺' || cardDef.name === '穿林破影' || cardDef.name === '燕返' || cardDef.name === '踏月连环' ||
+          cardDef.name === '青锋剑气' || cardDef.name === '百步飞剑' || cardDef.name === '一剑开天') {
+        if (targetIds.length === 0) return { accepted: false, reason: '请选择目标' };
+      }
+    }
+
+    // Remove from hand
+    this.hand = this.hand.filter(id => id !== cardInstanceId);
+
+    // Deduct energy
+    this.energy -= finalCost;
+    this._addEvent('energy_changed', { energy: this.energy, cost: finalCost });
+
+    // Check conditions
+    let conditionMet = true;
+    if (cardDef.onCast?.conditional?.condition === 'was_retained' && !cardInst.retainedThisTurn) {
+      conditionMet = false;
+    }
+
+    // Execute effects
+    this._log(`🎯 ${cardDef.name} (费${finalCost})`);
+    this._addEvent('card_play_started', { cardInstanceId, cardId: cardInst.cardId, targetIds });
+
+    // Track cards played
+    this.cardsPlayedThisTurn.push(cardInst.cardId);
+    this.uniqueCardsPlayedThisTurn.add(cardInst.cardId);
+
+    this._executeCard(cardInst, cardDef, targetIds);
+
+    // Post-cast: resource changes
+    if (cardDef.onCast?.resourceChange) {
+      const rc = cardDef.onCast.resourceChange;
+      if (rc.sword_intent) {
+        this.swordIntent = Math.min(3, this.swordIntent + rc.sword_intent);
+        this._addEvent('resource_changed', { resource: 'sword_intent', value: this.swordIntent });
+        if (this.swordIntent >= 3) {
+          this._addEvent('ultimate_ready', {});
+          this._log('⚔️ 剑意满3！大招就绪！');
         }
       }
-
-      // 连星扣 / 凝神珠 / 伏羲琴 / 普通连出保护
-      const hasRatchet = this.setup.equipment?.some(e => e.id === 'eq_lianxing_kou');
-      if (this.streakState.lastSkillId === s.id && this.streakState.consecutiveCount > 0) {
-        const streakStart = (hasRatchet ? 3 : 2) + this._eq.streakDelayAdd; // 凝神珠+1、伏羲琴+2
-        if (this.streakState.consecutiveCount >= streakStart) {
-          const charStreaks = this.setup.character.streakMultipliers || [{ after: 2, mult: 0.60 }, { after: 3, mult: 0.30 }];
-          const match = charStreaks.find(rule => this.streakState.consecutiveCount >= rule.after);
-          if (match) w *= match.mult;
-        }
-      }
-
-      // 太初 low HP sword bonus
-      const sigSword = this.setup.signatureSword;
-      if (sigSword && sigSword.id === 'sword_taichu') {
-        const lowHpBonus = sigSword.effect.lowHpSwordBonus;
-        if (lowHpBonus && this.player.hp / this.player.maxHp < lowHpBonus.lowHpThreshold) {
-          if (s.tag === '剑技') w *= lowHpBonus.weightMult;
-        }
-      }
-
-      // 大招剑意层数门禁：层数不够时不抽中（过滤掉大招）
-      if (s.requireSwordIntent) {
-        let required = s.requireSwordIntent;
-        const sigSwordEf = this.setup.signatureSword?.effect;
-        if (sigSwordEf?.ultimateCostReduce) required = Math.max(1, required - sigSwordEf.ultimateCostReduce);
-        if (this.swordIntentLevel < required) return null;
-      }
-
-      return { skill: s, weight: Math.max(1, w) };
-    }).filter(Boolean);
-
-    // Pick skill
-    const picked = this.skillRng.weightedPick(weighted.map(w => ({ value: w.skill, weight: w.weight })));
-    const effectiveWeight = weighted.find(w => w.skill.id === picked.id)?.weight || picked.baseWeight;
-
-    this._log(`🎯 随机抽中: ${picked.name}（权重: ${effectiveWeight.toFixed(0)}）`);
-
-    // Update streak
-    if (this.streakState.lastSkillId === picked.id) {
-      this.streakState.consecutiveCount++;
-    } else {
-      this.streakState.lastSkillId = picked.id;
-      this.streakState.consecutiveCount = 1;
-    }
-
-    // Add event
-    this._addEvent('skill_cast', { skill: picked, weight: effectiveWeight, streak: this.streakState.consecutiveCount });
-
-    // Check if signature sword buff applies
-    if (this.setup.signatureSword) {
-      const sword = this.setup.signatureSword;
-      this._applySignatureSword(sword, picked);
-    }
-
-    // Execute skill
-    this._executePlayerSkill(picked);
-
-    // Check for chain action (武圣 内功)
-    if (picked.chainAction) {
-      this._chainAction = picked;
-      this._playerAutoAction();
-      this._chainAction = null;
-    } else {
-      this._chainAction = null;
-    }
-  }
-
-  _executeChainAction() {
-    const innerSkill = this._chainAction;
-    let bonusMultiplier = 1;
-    if (innerSkill.chainAction.heavyBonus) bonusMultiplier = 1 + innerSkill.chainAction.heavyBonus;
-
-    // Pick fist or kick
-    const fistOrKick = this.player.skillSlots.filter(s =>
-      (s.tag === '拳法' || s.tag === '脚法' || s.tag === '拳法·绝技' || s.tag === '脚法·绝技') &&
-      this._getCooldown(s.id) <= 0
-    );
-
-    if (fistOrKick.length === 0) {
-      this._log('内功：无可用的拳/脚技能');
-      this._basicAttack();
-      return;
-    }
-
-    const picked = this.skillRng.pick(fistOrKick);
-    this._log(`💪 内功追加: ${picked.name}${bonusMultiplier > 1 ? ` (重式加成: +${((bonusMultiplier-1)*100).toFixed(0)}%)` : ''}`);
-    this._addEvent('skill_cast', { skill: picked, weight: 0, streak: this.streakState.consecutiveCount, chained: true });
-
-    // Check if momentum triggers 重式
-    let isHeavy = false;
-    if (this.momentum >= 3 && (picked.tag.includes('拳法') || picked.tag.includes('脚法'))) {
-      isHeavy = true;
-      this.momentum = 0;
-      this._log(`💥 蓄势爆发！重式！`);
-    }
-
-    this._executePlayerSkill(picked, { bonusMultiplier, isHeavy });
-  }
-
-  _basicAttack() {
-    const dmg = Math.max(1, Math.round(this.player.atk * 0.5));
-    const target = this._pickTarget('random');
-    if (target) {
-      this._present = { skillId: null, name: '普攻', category: 'basic', tag: '普攻', preset: 'light', isHeavy: false, isBloom: false, impactSfx: 'hit' };
-      this._dealDamage(this.player.id, target.id, dmg, ['basic']);
-    }
-  }
-
-  // ============ SKILL EXECUTION ============
-
-  _executePlayerSkill(skill, options = {}) {
-    let { bonusMultiplier = 1, isHeavy = false } = options;
-
-    // 大招逻辑：要求剑意层数 >= requireSwordIntent，释放后层数 -consumeSwordIntent
-    let isUltimate = false;
-    if (skill.requireSwordIntent) {
-      let required = skill.requireSwordIntent;
-      // 惊鸿：大招要求-1（但不低于 1）
-      const sigSwordEf = this.setup.signatureSword?.effect;
-      if (sigSwordEf?.ultimateCostReduce) required = Math.max(1, required - sigSwordEf.ultimateCostReduce);
-      // 防御性守卫：层数不够时此技能不应被调用（pick 阶段已过滤）
-      if (this.swordIntentLevel < required) {
-        this._log(`⚠️ 剑意不足（${this.swordIntentLevel}/${required}），无法释放大招`);
-        return;
-      }
-      const consume = skill.consumeSwordIntent || 1;
-      const before = this.swordIntentLevel;
-      this.swordIntentLevel = Math.max(0, this.swordIntentLevel - consume);
-      isUltimate = true;
-      this._log(`⚔️ 大招释放！剑意层数 ${before} → ${this.swordIntentLevel}`);
-    }
-
-    // 演出元数据：供表现层按事件驱动斩击/剑气/震屏等效果，不影响结算
-    this._present = {
-      skillId: skill.id,
-      name: skill.name,
-      category: skill.category,
-      tag: skill.tag,
-      preset: skill.hitPreset || 'standard',
-      isHeavy,
-      isBloom: false, // 旧盛放机制已移除
-      isUltimate,
-      impactSfx: skill.impactSfx,
-      castSfx: skill.castSfx,
-      multiHit: !!skill.multiHit,
-      ultimate: !!skill.tier || skill.tag.includes('绝技') || skill.tag.includes('大招')
-    };
-
-    // Determine effects to use
-    let effects = skill.effects;
-
-    // 武圣 heavy bonus
-    if (isHeavy && skill.heavyBonus) {
-      bonusMultiplier *= (skill.heavyBonus.multiplier || 1);
-      if (skill.heavyBonus.critDamage) bonusMultiplier *= (1 + skill.heavyBonus.critDamage);
-      if (skill.heavyBonus.execute) skill.execute = true;
-    }
-
-    // Process each effect
-    let totalDamage = 0;
-    for (const effect of effects) {
-      if (effect.type === 'damage') {
-        const hits = effect.hits || 1;
-        for (let h = 0; h < hits; h++) {
-          // Pick target
-          let target;
-          if (effect.allEnemies) {
-            // Deal damage to all alive enemies
-            const alive = this.enemies.filter(e => e.alive);
-            for (const enemy of alive) {
-              totalDamage += this._resolveDamage(skill, effect, enemy, bonusMultiplier, isHeavy);
-            }
-            continue;
-          } else {
-            target = this._pickTarget(skill.target, skill);
-            if (!target) continue;
-          }
-
-          totalDamage += this._resolveDamage(skill, effect, target, bonusMultiplier, isHeavy);
-
-          // Execute check
-          this._checkExecute(skill, target, totalDamage, isHeavy);
-        }
-
-        // 断岳: hit counter
-        this.totalHitsDealt += hits;
-        if (this.setup.signatureSword && this.setup.signatureSword.id === 'sword_duanyue') {
-          if (this.totalHitsDealt >= 7) {
-            this.totalHitsDealt = 0;
-            this._log('⚔️ 断岳一击！');
-          }
-        }
-
-      } else if (effect.type === 'buff') {
-        if (!this.playerBuffs[effect.buff]) this.playerBuffs[effect.buff] = { stacks: 0, value: effect.amount };
-        this.playerBuffs[effect.buff].stacks = Math.min(effect.maxStacks || 999, this.playerBuffs[effect.buff].stacks + 1);
-        this.playerBuffs[effect.buff].value = effect.amount;
-        this._log(`⬆️ 获得${effect.buff} x${this.playerBuffs[effect.buff].stacks}`);
-      } else if (effect.type === 'shield') {
-        this.hasShield += Math.floor(this.player.maxHp * effect.amount);
-        this._log(`🛡️ 获得护盾 +${Math.floor(this.player.maxHp * effect.amount)}`);
-      } else if (effect.type === 'heal') {
-        const healAmt = Math.floor(this.player.maxHp * effect.amount);
-        this.player.hp = Math.min(this.player.maxHp, this.player.hp + healAmt);
-        this._log(`💚 回复生命 +${healAmt}`);
-      } else if (effect.type === 'set_momentum') {
-        this.momentum = Math.min(this._momentumMax(), effect.amount);
-        this._log(`💪 蓄势达到${this.momentum}！`);
+      if (rc.momentum) {
+        this.momentum = Math.min(3, this.momentum + rc.momentum);
+        this._addEvent('resource_changed', { resource: 'momentum', value: this.momentum });
       }
     }
 
-    // Apply on-hit effects
-    if (skill.onHit) {
-      if (skill.onHit.swordIntent) {
-        // 二级制：点数 +1，满 3 升 1 层
-        this.swordIntent += skill.onHit.swordIntent;
-        const sigSwordEf = this.setup.signatureSword?.effect;
-        // 太初：低血量时，剑技命中额外 +1 点
-        if (sigSwordEf?.lowHpSwordBonus &&
-            this.player.hp / this.player.maxHp < sigSwordEf.lowHpSwordBonus.lowHpThreshold) {
-          this.swordIntent += sigSwordEf.lowHpSwordBonus.intentBonus;
-        }
-        // 每 3 点升 1 层（最多 3 层）
-        while (this.swordIntent >= 3 && this.swordIntentLevel < 3) {
-          this.swordIntentLevel++;
-          this.swordIntent -= 3;
-          this._log(`⬆ 剑意突破！层数升为 ${this.swordIntentLevel} / 3（+${this.swordIntentLevel * 10}% 伤害）`);
-        }
-        // 层数已满 3 时点数不再累积
-        if (this.swordIntentLevel >= 3) this.swordIntent = 0;
-        if (this.swordIntent > 0) {
-          this._log(`✦ 剑意 +1，点数: ${this.swordIntent}/3，层数: ${this.swordIntentLevel}/3`);
-        }
-      }
+    // Combo bonus for 踏月连环
+    if (cardDef.onCast?.comboPerUnique) {
+      // Already handled in damage calc
     }
 
-    // Apply status effects
-    if (skill.applyStatus) {
-      const target = this._pickTarget(skill.target);
-      if (target) this._applyStatus(target.id, skill.applyStatus);
-    }
-
-    // 武圣 armor break bonus
-    if (skill.armorBrokenBonus) {
-      const target = this._pickTarget(skill.target);
-      if (target && this._getStatusStacks(target.id, 'armorBreak') > 0) {
-        this._log(`碎甲加成！`);
-        // Re-deal with higher damage
-        const extraDmg = (skill.armorBrokenBonus.damage - 1) * skill.effects[0].base;
-        this._dealDamage(this.player.id, target.id, Math.floor(extraDmg), ['bonus']);
-      }
-    }
-
-    // Condition bonus
-    let conditionMet = false;
-    if (skill.conditionBonus) {
-      const target = this._pickTarget(skill.target);
-      if (target) {
-        if (skill.conditionBonus.condition === 'target_hp_above_70' && target.hp / target.maxHp > 0.7) conditionMet = true;
-        if (skill.conditionBonus.condition === 'target_hp_below_50' && target.hp / target.maxHp < 0.5) conditionMet = true;
-        if (skill.conditionBonus.condition === 'last_skill_qi' && this.streakState.consecutiveCount === 1) {
-          const lastSkill = this.player.skillSlots.find(s => s.id === this.streakState.lastSkillId);
-          if (lastSkill && lastSkill.category === 'sword_qi') conditionMet = true;
-        }
-        if (conditionMet) {
-          const bonusDmg = skill.effects[0].base * skill.conditionBonus.damage * bonusMultiplier;
-          this._dealDamage(this.player.id, target.id, Math.floor(bonusDmg), ['condition']);
-        }
-      }
-    }
-
-    // Chain bonus (回风斩 different skill)
-    if (skill.chainBonus && this.streakState.lastSkillId && this.streakState.lastSkillId !== skill.id) {
-      const target = this._pickTarget(skill.target);
-      if (target) {
-        const chainDmg = skill.effects[0].base * skill.chainBonus.damage * bonusMultiplier;
-        this._dealDamage(this.player.id, target.id, Math.floor(chainDmg), ['chain']);
-        this._log('🔄 回风追击！');
-      }
-    }
-
-    // Revenge bonus (折光回剑)
-    if (skill.revengeBonus && this.tookDamageLastRound) {
-      const target = this._pickTarget(skill.target);
-      if (target) {
-        const revengeDmg = skill.effects[0].base * skill.revengeBonus.damage * bonusMultiplier;
-        this._dealDamage(this.player.id, target.id, Math.floor(revengeDmg), ['revenge']);
-        this._log('↩️ 折光反击！');
-      }
-    }
-
-    // Execute bonus (穿林破影)
-    if (skill.executeBonus) {
-      const target = this._pickTarget(skill.target);
-      if (target && target.hp / target.maxHp < skill.executeBonus.threshold) {
-        const chaseDmg = skill.effects[0].base * skill.executeBonus.chaseDamage * bonusMultiplier;
-        this._dealDamage(this.player.id, target.id, Math.floor(chaseDmg), ['chase']);
-        this._log('🏃 穿林追击！');
-      }
-    }
-
-    // 剑鸣机制已移除（剑意改 3 层堆叠系统）
+    // 名剑效果
+    this._applySignatureSwordEffect(cardDef);
 
     // Proficiency gain
-    const hasReplayModule = this.setup.equipment?.some(e => e.id === 'eq_huifeng_jian');
-    const hasTrainingManual = this.setup.equipment?.some(e => e.id === 'eq_wujian_tie');
+    this._gainProficiency(cardInst.cardId, cardDef);
 
-    if ((totalDamage > 0 || isHeavy) && !hasReplayModule) {
-      if (this.proficiency[skill.id]) {
-        let xpGain = 1;
-        // 悟剑帖：每场战斗第1次释放获得+3熟练经验
-        if (hasTrainingManual && !this._eqState.firstCastBonusUsed) {
-          xpGain += 3;
-          this._eqState.firstCastBonusUsed = true;
-          this._log('📖 悟剑帖：额外+3熟练经验');
-        }
-        this.proficiency[skill.id].xp += xpGain;
-        const newLevel = this._getProficiencyLevel(this.proficiency[skill.id].xp);
-        if (newLevel > this.proficiency[skill.id].level) {
-          this.proficiency[skill.id].level = newLevel;
-          this.pendingUpgrades.push(skill.id);
-          this._log(`⭐ ${skill.name} 熟练度提升到 Lv${newLevel}！`);
-        }
-      }
-    }
-
-    // 蓄势 gain
-    this.momentum = Math.min(this._momentumMax(), this.momentum + 1);
-  }
-
-  _resolveDamage(skill, effect, target, bonusMultiplier, isHeavy) {
-    let rawDmg = effect.base; // 具体伤害数值（来自 data.js）
-
-    // Proficiency bonus
-    const prof = this.proficiency[skill.id];
-    if (prof) {
-      const profMult = [1.0, 1.08, 1.18, 1.30, 1.45][prof.level - 1] || 1.0;
-      rawDmg *= profMult;
-    }
-
-    // 剑意层数加成：剑技/剑气吃每层 +10%，大招不吃（已含强力设定）
-    if (skill.category === 'sword_technique' || skill.category === 'sword_qi') {
-      rawDmg *= (1 + this.swordIntentLevel * 0.10);
-    }
-    // 惊鸿：大招伤害额外 +20%
-    if (skill.category === 'sword_ultimate' && this.setup.signatureSword?.effect?.ultimateBonus) {
-      rawDmg *= (1 + this.setup.signatureSword.effect.ultimateBonus);
-    }
-
-    // 阴阳珏：不同标签相邻+8%效果
-    if (this.setup.equipment?.some(e => e.id === 'eq_yinyang_jue')) {
-      const skillIndex = this.player.skillSlots.findIndex(s => s.id === skill.id);
-      if (skillIndex >= 0) {
-        const totalSlots = this.player.skillSlots.length;
-        const hasLoopConnector = this.setup.equipment?.some(e => e.id === 'eq_zhoutian_huan');
-        const prevTag = skillIndex > 0
-          ? this.player.skillSlots[skillIndex - 1].tag
-          : (hasLoopConnector ? this.player.skillSlots[totalSlots - 1].tag : null);
-        const nextTag = skillIndex < totalSlots - 1
-          ? this.player.skillSlots[skillIndex + 1].tag
-          : (hasLoopConnector ? this.player.skillSlots[0].tag : null);
-        const currentTag = skill.tag;
-        if ((prevTag && prevTag !== currentTag) || (nextTag && nextTag !== currentTag)) {
-          rawDmg *= 1.08;
-        }
-      }
-    }
-
-    // 贯甲符：对带有"破甲"状态的敌人，伤害额外+25%
-    if (this.setup.equipment?.some(e => e.id === 'eq_guanjia_fu')) {
-      if (this._getStatusStacks(target.id, 'armorBreak') > 0) {
-        rawDmg *= 1.25;
-      }
-    }
-
-    // 回风鉴：效果+25%
-    if (this.setup.equipment?.some(e => e.id === 'eq_huifeng_jian')) {
-      rawDmg *= 1.25;
-    }
-
-    // 连星扣：连续技能伤害+8%
-    if (this.setup.equipment?.some(e => e.id === 'eq_lianxing_kou')) {
-      if (this.streakState.lastSkillId === skill.id && this.streakState.consecutiveCount >= 2) {
-        rawDmg *= 1.08;
-      }
-    }
-
-    // 装备通用增伤（裂石劲/轩辕剑意/诛仙剑/混沌青莲）
-    if (this._eq.dmgMultAdd > 0) rawDmg *= (1 + this._eq.dmgMultAdd);
-    // 对破甲敌人增伤（伏魔印/东皇钟）
-    if (this._eq.vsArmorBreakAdd > 0 && this._getStatusStacks(target.id, 'armorBreak') > 0) rawDmg *= (1 + this._eq.vsArmorBreakAdd);
-    // 对高生命敌人增伤（破军令）
-    if (this._eq.vsHighHpAdd > 0 && target.hp / target.maxHp > 0.7) rawDmg *= (1 + this._eq.vsHighHpAdd);
-    // 对低生命敌人增伤（红尘劫）
-    if (this._eq.vsLowHpAdd > 0 && target.hp / target.maxHp < 0.3) rawDmg *= (1 + this._eq.vsLowHpAdd);
-    // 连续同招增伤（定身符）
-    if (this._eq.streakDmgAdd > 0 && this.streakState.lastSkillId === skill.id && this.streakState.consecutiveCount >= 2) rawDmg *= (1 + this._eq.streakDmgAdd);
-
-    // Buff bonuses
-    if (this.playerBuffs['atkUp']) {
-      rawDmg *= (1 + this.playerBuffs['atkUp'].value * this.playerBuffs['atkUp'].stacks);
-    }
-
-    // Signature sword: 流光 different skill bonus
-    if (this.setup.signatureSword && this.setup.signatureSword.id === 'sword_liuguang') {
-      if (this.streakState.consecutiveCount === 1) { // Different from last skill
-        rawDmg *= 1.12;
-      }
-      // 3 different in a row
-      // (simplified check)
-    }
-
-    rawDmg *= bonusMultiplier;
-
-    // Heavy multiplier (蓄势)
-    if (isHeavy) {
-      rawDmg *= 1.75;
-      // 会心玉：蓄势重击额外+35%
-      if (this.setup.equipment?.some(e => e.id === 'eq_huixin_yu')) {
-        rawDmg *= 1.35;
-      }
-      // 玄铁戒/御风环/惊鸿扇/九天玄女佩：重击额外增伤
-      if (this._eq.heavyAdd > 0) rawDmg *= (1 + this._eq.heavyAdd);
-    }
-
-    // Defense reduction: 平滑百分比减伤（含无视防御：破障符/盘古斧意）
-    const effDef = Math.max(0, target.defense * (1 - this._eq.ignoreDef) - (this._getStatusStacks(target.id, 'armorBreak') * 3));
-    const mitigation = effDef / (effDef + ARMOR_CONST);
-    rawDmg = Math.max(1, rawDmg * (1 - mitigation));
-
-    // Damage taken multiplier
-    rawDmg *= (this.enemyBuffs[target.id]?.damageTakenMult || 1);
-
-    // Random variance ±10%
-    rawDmg *= (0.9 + this.rng.nextFloat() * 0.2);
-
-    // 最低伤害下限：避免出现"只打1滴血"的离谱情况（尤其对高防御敌人）
-    const atkFloor = Math.max(2, Math.floor(this.player.atk * 0.15));
-    const finalDmg = Math.max(atkFloor, Math.floor(rawDmg));
-
-    this._dealDamage(this.player.id, target.id, finalDmg, ['skill', skill.tag]);
-
-    // 装备：攻击附加状态（含沙射影/赤焰符/紫电青霜/昆仑镜）
-    if (this.rng && target.alive) {
-      if (this._eq.armorBreakOnHitChance > 0 && this.rng.nextFloat() < this._eq.armorBreakOnHitChance) {
-        this._applyStatus(target.id, { type: 'armorBreak', stacks: this._eq.armorBreakOnHitStacks });
-      }
-      if (this._eq.burnOnHitChance > 0 && this.rng.nextFloat() < this._eq.burnOnHitChance) {
-        this._applyStatus(target.id, { type: 'burn', stacks: this._eq.burnOnHitStacks });
-      }
-    }
-
-    return finalDmg;
-  }
-
-  _checkExecute(skill, target, damage, isHeavy) {
-    if (!target || !target.alive) return;
-
-    // Check if skill has execute trait
-    const isExecuteSkill = skill.execute ||
-      (skill.effects && skill.effects[0] && skill.effects[0].execute) ||
-      (skill.heavyBonus && skill.heavyBonus.execute);
-
-    if (isExecuteSkill && target.definition && target.definition.type !== 'boss') {
-      const hpPercent = target.hp / target.maxHp;
-      const threshold = (skill.effects && skill.effects[0] && skill.effects[0].execute) ||
-                        skill.execute ||
-                        0.18;
-      if (hpPercent <= threshold) {
-        target.hp = 0;
-        target.alive = false;
-        this._log(`💀 处决！${target.name}被直接击杀！`);
-        this._addEvent('execute', { target: target.name, skill: skill.name });
-      }
-    }
-
-    // 武圣: 力破 check for heavy attacks
-    if (isHeavy && target.definition && target.definition.type !== 'boss') {
-      const maxHpDmg = damage / target.maxHp;
-      if (maxHpDmg >= 0.35) {
-        const extraDmg = Math.floor(target.maxHp * 0.08);
-        this._dealDamage(this.player.id, target.id, extraDmg, ['forceBreak']);
-        this._log(`💥 力破！震伤 +${extraDmg}`);
-      }
-    }
-  }
-
-  // ============ ENEMY AI ============
-
-  _enemyAction(enemy) {
-    if (!enemy.alive) return;
-
-    // Check phase transitions for boss
-    if (enemy.phases && enemy.phases.length > 0) {
-      for (const phase of enemy.phases) {
-        if (enemy.hp / enemy.maxHp <= phase.hpThreshold && !enemy[`phase_${phase.hpThreshold}_active`]) {
-          enemy[`phase_${phase.hpThreshold}_active`] = true;
-          enemy.definition.skills = [...enemy.definition.skills, phase.skillUnlock];
-          this._log(`🐉 ${enemy.name}进入第二阶段！解锁新技能：${phase.skillUnlock.name}`);
-        }
-      }
-    }
-
-    // Filter available skills (respect cooldowns)
-    const available = enemy.definition.skills.filter(s => {
-      const cd = enemy.cooldowns[s.name] || 0;
-      return cd <= 0;
-    });
-
-    if (available.length === 0) {
-      // Basic attack
-      this._applyDamageToPlayer(enemy.maxHp * 0.1, enemy.name, '普攻', null, enemy.id);
-      return;
-    }
-
-    // Pick skill by weight
-    const weighted = available.map(s => ({ value: s, weight: s.weight }));
-    const picked = this.aiRng.weightedPick(weighted);
-
-    // Set cooldown
-    if (picked.cooldown) {
-      enemy.cooldowns[picked.name] = picked.cooldown + 1;
-    }
-
-    // Override target selection for healing
-    if (picked.target === 'self_lowest') {
-      const allies = [enemy, ...this.enemies.filter(e => e !== enemy && e.alive)];
-      allies.sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp));
-      const healTarget = allies[0];
-      const healAmount = Math.floor(enemy.maxHp * (picked.heal / healTarget.maxHp * 0.3));
-      healTarget.hp = Math.min(healTarget.maxHp, healTarget.hp + healAmount);
-      this._log(`${enemy.name} 使用 ${picked.name}，治疗 ${healTarget.name} +${healAmount}`);
-      return;
-    }
-
-    if (picked.target === 'self') {
-      // Self buff
-      if (picked.buff) {
-        enemy.defense += picked.buff.def || 0;
-        this._log(`${enemy.name} 使用 ${picked.name}，防御+${picked.buff.def || 0}`);
-      }
-      if (picked.heal) {
-        enemy.hp = Math.min(enemy.maxHp, enemy.hp + picked.heal);
-        this._log(`${enemy.name} 使用 ${picked.name}，回复${picked.heal}生命`);
-      }
-      return;
-    }
-
-    // Deal damage to player
-    const baseDmg = enemy.maxHp * (picked.damage / 50);
-    let finalDmg = Math.floor(baseDmg * (0.9 + this.rng.nextFloat() * 0.2));
-
-    // Status application on hit
-    let appliedStatus = null;
-    if (picked.status) {
-      appliedStatus = picked.status;
-    }
-
-    // 经过装备减伤 / 首击护身 / 护盾吸收
-    this._applyDamageToPlayer(finalDmg, enemy.name, picked.name, appliedStatus, enemy.id);
-  }
-
-  /** 玩家受到伤害的统一步骤：装备减伤 → 首击护身 → 护盾吸收 → 扣血 → 状态 → 失败判定 */
-  _applyDamageToPlayer(amount, sourceName, skillName, appliedStatus, enemyId) {
-    amount = Math.floor(amount);
-
-    // 装备：伤害减免（铁布衫/龙鳞甲/玄武甲/女娲石）
-    if (this._eq.dmgReduction > 0) {
-      amount = Math.floor(amount * (1 - this._eq.dmgReduction));
-    }
-
-    // 首击护身（护身符/昆仑玉/混沌青莲）：每场战斗首次受击按比例化解
-    if (!this._eqState.firstHitUsed && this._eq.firstHitShieldPct > 0) {
-      this._eqState.firstHitUsed = true;
-      const reduced = Math.floor(amount * this._eq.firstHitShieldPct);
-      amount -= reduced;
-      this._log(`🛡 护身宝物化解 ${reduced} 点伤害！`);
-    }
-
-    // 护盾吸收
-    if (this.hasShield > 0) {
-      const absorbed = Math.min(this.hasShield, amount);
-      this.hasShield -= absorbed;
-      amount -= absorbed;
-      if (this.hasShield <= 0) this.hasShield = 0;
-    }
-
-    amount = Math.max(0, amount);
-    this.player.hp -= amount;
-    this._log(`${sourceName} 的${skillName}对你造成 ${amount} 点伤害`);
-
-    if (appliedStatus) this._applyStatus('player', appliedStatus);
-    this.tookDamageLastRound = true;
-    this._addEvent('enemy_action', { enemy: sourceName, enemyId: enemyId, skill: skillName, damage: amount });
-
-    // Check defeat
-    if (this.player.hp <= 0) {
-      this.player.hp = 0;
-      this.player.alive = false;
-      this.isDefeat = true;
-      this.phase = 'defeat';
-    }
-  }
-
-  // ============ STATUS SYSTEM ============
-
-  _applyStatus(targetId, statusDef) {
-    if (targetId === 'player') {
-      if (!this.player.statuses) this.player.statuses = {};
-      const existing = this.player.statuses[statusDef.type] || { stacks: 0 };
-      existing.stacks = Math.min((STATUS[statusDef.type]?.maxStacks || 999), existing.stacks + (statusDef.stacks || 1));
-      this.player.statuses[statusDef.type] = existing;
-      this._log(`玩家获得 ${statusDef.type} x${statusDef.stacks}`);
+    // Move card to discard/exhaust based on keywords
+    if (cardDef.pileKeywords.includes('exhaust')) {
+      this.exhaustPile.push(cardInstanceId);
+      this._addEvent('card_exhausted', { cardInstanceId });
+    } else if (cardDef.cardType === 'power') {
+      this.powerZone.push(cardInstanceId);
+      this._addEvent('card_to_powerzone', { cardInstanceId });
     } else {
-      const enemy = this.enemies.find(e => e.id === targetId);
-      if (enemy) {
-        if (!enemy.statuses) enemy.statuses = {};
-        const existing = enemy.statuses[statusDef.type] || { stacks: 0 };
-        existing.stacks = Math.min((STATUS[statusDef.type]?.maxStacks || 999), existing.stacks + (statusDef.stacks || 1));
-        enemy.statuses[statusDef.type] = existing;
-        this._log(`${enemy.name} 获得 ${statusDef.type} x${statusDef.stacks}`);
-        this._addEvent('status_applied', { targetId, status: statusDef.type, stacks: existing.stacks });
-      }
+      this.discardPile.push(cardInstanceId);
+      this._addEvent('card_discarded', { cardInstanceId });
     }
+
+    // Check end conditions
+    this._checkEndConditions();
+    return { accepted: true, result: this.getResult(), events: [...this.events], log: [...this.battleLog] };
   }
 
-  _getStatusStacks(targetId, statusType) {
-    if (targetId === 'player') {
-      return this.player.statuses?.[statusType]?.stacks || 0;
-    }
-    const enemy = this.enemies.find(e => e.id === targetId);
-    return enemy?.statuses?.[statusType]?.stacks || 0;
-  }
+  /** Cast ultimate (剑圣大招) */
+  castUltimate() {
+    if (this.phase !== 'player_input') return { accepted: false, reason: '非玩家输入阶段' };
+    if (this.swordIntent < 3) return { accepted: false, reason: '剑意不足3点' };
+    if (!this.setup.character.ultimate) return { accepted: false, reason: '无大招' };
 
-  _statusTick(timing) {
-    // Tick enemy statuses
-    for (const enemy of this.enemies) {
-      if (!enemy.alive || !enemy.statuses) continue;
-      for (const [statusType, instance] of Object.entries(enemy.statuses)) {
-        const statusDef = STATUS[statusType];
-        if (!statusDef) continue;
+    const ultimate = this.setup.character.ultimate;
+    this.swordIntent = 0;
+    this.ultimateCastedThisTurn = true;
 
-        if (statusDef.decayTiming === timing) {
-          instance.stacks = Math.max(0, instance.stacks - (statusDef.decay || 0));
-          if (instance.stacks <= 0) delete enemy.statuses[statusType];
-        }
+    this._addEvent('ultimate_started', {});
+    this._addEvent('resource_changed', { resource: 'sword_intent', value: 0 });
+    this._log('⚔️ 万剑归流！');
 
-        if (timing === 'round_end' && statusType === 'burn' && instance.stacks > 0) {
-          const dmg = instance.stacks * 2;
-          enemy.hp -= dmg;
-          this._log(`🔥 ${enemy.name} 燃烧伤害 -${dmg} (${instance.stacks}层)`);
-          if (enemy.hp <= 0) {
-            enemy.hp = 0;
-            enemy.alive = false;
-            this._log(`💀 ${enemy.name} 被燃烧致死！`);
+    // Execute ultimate effects
+    for (const effect of ultimate.effects) {
+      if (effect.type === 'damage') {
+        const hits = effect.hits || 1;
+        const multiplier = effect.multiplier || 1;
+
+        if (effect.allEnemies) {
+          const alive = this.enemies.filter(e => e.alive);
+          for (const enemy of alive) {
+            for (let h = 0; h < hits; h++) {
+              this._dealDamage(enemy.id, multiplier, ['ultimate'], ultimate.hitPreset || 'heavy');
+            }
+          }
+        } else if (effect.targetMode === 'lowest_hp_pct') {
+          const alive = this.enemies.filter(e => e.alive);
+          if (alive.length > 0) {
+            const target = alive.reduce((a, b) => (a.hp / a.maxHp) <= (b.hp / b.maxHp) ? a : b);
+            for (let h = 0; h < hits; h++) {
+              this._dealDamage(target.id, multiplier, ['ultimate'], ultimate.hitPreset || 'execute');
+            }
           }
         }
       }
     }
 
-    // Tick player statuses
-    if (this.player.statuses) {
-      for (const [statusType, instance] of Object.entries(this.player.statuses)) {
-        const statusDef = STATUS[statusType];
-        if (!statusDef) continue;
+    // 太初：大招后获得8护盾
+    if (this.signatureSword && this.signatureSword.id === 'sword_taichu') {
+      this.shield += 8;
+      this._log('🛡 太初：释放大招获得8护盾');
+      this._addEvent('shield_changed', { shield: this.shield, delta: 8 });
+    }
 
-        if (statusDef.decayTiming === timing) {
-          instance.stacks = Math.max(0, instance.stacks - (statusDef.decay || 0));
-          if (instance.stacks <= 0) delete this.player.statuses[statusType];
+    this._addEvent('ultimate_finished', {});
+    this._checkEndConditions();
+    return { accepted: true, result: this.getResult(), events: [...this.events], log: [...this.battleLog] };
+  }
+
+  /** End player turn */
+  endTurn() {
+    if (this.phase !== 'player_input') return { accepted: false, reason: '非玩家输入阶段' };
+
+    this._log('--- 结束回合 ---');
+
+    // Discard non-retain cards
+    const toKeep = [];
+    const toDiscard = [];
+    for (const ciid of this.hand) {
+      const ci = this.cardInstances[ciid];
+      const cd = ALL_CARDS[ci.cardId];
+      if (cd && (cd.pileKeywords.includes('retain') || ci.retainedThisTurn)) {
+        toKeep.push(ciid);
+      } else {
+        toDiscard.push(ciid);
+      }
+    }
+
+    // 藏锋剑鞘：随机保留1张剑气
+    const hiddenScabbard = this.equipment.find(e => e.id === 'eq_hidden_scabbard');
+    if (hiddenScabbard && toDiscard.length > 0) {
+      const qiCards = toDiscard.filter(ciid => {
+        const cd = ALL_CARDS[this.cardInstances[ciid].cardId];
+        return cd && cd.roleCategory === 'sword_qi';
+      });
+      if (qiCards.length > 0) {
+        const pick = this.effectRng.pick(qiCards);
+        toKeep.push(pick);
+        toDiscard.splice(toDiscard.indexOf(pick), 1);
+        this._log('⚔️ 藏锋剑鞘：保留1张剑气');
+      }
+    }
+
+    this.hand = toKeep;
+    this.discardPile.push(...toDiscard);
+
+    // Clear trackers
+    this.cardsPlayedThisTurn = [];
+    this.uniqueCardsPlayedThisTurn.clear();
+    this.ultimateCastedThisTurn = false;
+    this._eqState.firstHitPoisonUsed = false;
+    this._eqState.energyOnReshuffleUsed = 0;
+    this._eqState.firstQiDiscounted = false;
+    this._eqState.firstCost2Attacked = false;
+    this._eqState.chain3DiffCount = 0;
+    this._eqState.chain3DiffCards = [];
+
+    // 回气玉：上回合能量为0，下回合+1
+    const energyJade = this.equipment.find(e => e.id === 'eq_energy_jade');
+    if (energyJade && this.energy === 0 && this._eqState.energyOnEmptyUsed < 2) {
+      this._eqState.energyOnEmptyUsed++;
+    }
+
+    // Enemy turn
+    this.phase = 'enemy_turn';
+    this._executeEnemyTurn();
+
+    // Generate next intents
+    this._generateAllIntents();
+
+    // New player turn
+    this.round++;
+    this.energy = this.maxEnergy;
+    if (this._eqState.energyOnEmptyUsed > 0) {
+      this.energy++;
+      this._eqState.energyOnEmptyUsed = 0;
+      this._log('⚡ 回气玉：额外获得1能量');
+    }
+    this.shield = 0; // Shield clears per turn (with exceptions via equipment)
+    this._drawCards(this.setup.character.baseDraw);
+    this.phase = 'player_input';
+
+    this._checkEndConditions();
+    return { accepted: true, result: this.getResult(), events: [...this.events], log: [...this.battleLog] };
+  }
+
+  // ---- CARD EXECUTION ----
+
+  _executeCard(cardInst, cardDef, targetIds) {
+    const isHeavy = this._checkHeavy(cardDef);
+    const isRetained = cardInst.retainedThisTurn;
+
+    for (const effect of cardDef.effects) {
+      if (effect.type === 'damage') {
+        const hits = effect.hits || 1;
+        const multiplier = effect.multiplier || 1;
+
+        if (effect.allEnemies) {
+          const alive = this.enemies.filter(e => e.alive);
+          for (const enemy of alive) {
+            for (let h = 0; h < hits; h++) {
+              this._dealDamage(enemy.id, multiplier, [cardDef.id], cardDef.hitPreset);
+            }
+          }
+        } else {
+          let target = null;
+          if (targetIds.length > 0) {
+            target = this.enemies.find(e => e.id === targetIds[0] && e.alive);
+          }
+          if (!target) {
+            const alive = this.enemies.filter(e => e.alive);
+            if (alive.length > 0) target = alive[0];
+          }
+          if (target) {
+            for (let h = 0; h < hits; h++) {
+              const extraMult = this._getDamageModifiers(cardDef, cardInst, target, isHeavy);
+              this._dealDamage(target.id, multiplier * extraMult, [cardDef.id], cardDef.hitPreset);
+            }
+          }
         }
+      } else if (effect.type === 'gain_shield') {
+        let amount = effect.amount || 0;
+        // 铁壁法衣：首次护盾+30%
+        const ironWall = this.equipment.find(e => e.id === 'eq_iron_wall_robe');
+        if (ironWall && !this._eqState.firstShieldBonusUsed) {
+          amount = Math.floor(amount * 1.30);
+          this._eqState.firstShieldBonusUsed = true;
+        }
+        this.shield += amount;
+        this._addEvent('shield_changed', { shield: this.shield, delta: amount });
+        this._log(`🛡 获得护盾+${amount}`);
+      } else if (effect.type === 'draw_cards') {
+        this._drawCards(effect.amount || 0);
+      } else if (effect.type === 'add_status') {
+        if (targetIds.length > 0) {
+          const enemy = this.enemies.find(e => e.id === targetIds[0] && e.alive);
+          if (enemy) this._applyStatus(enemy, effect.statusId, effect.stacks || 1);
+        }
+      } else if (effect.type === 'add_buff') {
+        if (!this.buffs[effect.buffId]) this.buffs[effect.buffId] = { stacks: 0, value: effect.value };
+        this.buffs[effect.buffId].stacks = Math.min(effect.maxStacks || 999, this.buffs[effect.buffId].stacks + (effect.stacks || 1));
+        this.buffs[effect.buffId].value = effect.value;
+        this._log(`⬆ ${effect.buffId} x${this.buffs[effect.buffId].stacks}`);
+      } else if (effect.type === 'resource_change') {
+        if (effect.resourceId === 'momentum') {
+          this.momentum = Math.min(3, this.momentum + (effect.delta || 0));
+          this._addEvent('resource_changed', { resource: 'momentum', value: this.momentum });
+        }
+      } else if (effect.type === 'modify_next_damage') {
+        // 藏锋式: next sword_qi damage +25%
+        this._nextDamageBonus = { tag: effect.tag, bonus: effect.bonus };
+      } else if (effect.type === 'set_keyword') {
+        // Add retain to self
+        cardInst.retainedThisTurn = true;
+      } else if (effect.type === 'conditional') {
+        // Check condition
+        if (effect.condition === 'last_card_was_qi') {
+          if (this.cardsPlayedThisTurn.length >= 2) {
+            const prevCardId = this.cardsPlayedThisTurn[this.cardsPlayedThisTurn.length - 2];
+            const prevCard = ALL_CARDS[prevCardId];
+            if (prevCard && prevCard.roleCategory === 'sword_qi') {
+              this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+            }
+          }
+        } else if (effect.condition === 'target_hp_below_50') {
+          if (targetIds.length > 0) {
+            const enemy = this.enemies.find(e => e.id === targetIds[0]);
+            if (enemy && enemy.hp / enemy.maxHp < 0.5) {
+              this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+            }
+          }
+        } else if (effect.condition === 'target_hp_below_25') {
+          if (targetIds.length > 0) {
+            const enemy = this.enemies.find(e => e.id === targetIds[0]);
+            if (enemy && enemy.hp / enemy.maxHp < 0.25) {
+              this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+            }
+          }
+        } else if (effect.condition === 'target_hp_above_70') {
+          if (targetIds.length > 0) {
+            const enemy = this.enemies.find(e => e.id === targetIds[0]);
+            if (enemy && enemy.hp / enemy.maxHp > 0.7) {
+              this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+            }
+          }
+        } else if (effect.condition === 'target_hp_below_30') {
+          if (targetIds.length > 0) {
+            const enemy = this.enemies.find(e => e.id === targetIds[0]);
+            if (enemy && enemy.hp / enemy.maxHp < 0.3) {
+              this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+            }
+          }
+        } else if (effect.condition === 'enemy_intent_is_attack') {
+          if (targetIds.length > 0) {
+            const plan = this.enemyPlans[targetIds[0]];
+            if (plan && plan.intent === 'attack') {
+              this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+            }
+          }
+        } else if (effect.condition === 'sword_intent_ge_2') {
+          if (this.swordIntent >= 2) {
+            this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+          }
+        } else if (effect.condition === 'sword_intent_eq_3') {
+          if (this.swordIntent === 3) {
+            this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+          }
+        } else if (effect.condition === 'momentum_eq_3') {
+          if (this.momentum === 3) {
+            this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+          }
+        } else if (effect.condition === 'only_one_enemy') {
+          if (this.enemies.filter(e => e.alive).length === 1) {
+            this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+          }
+        } else if (effect.condition === 'ultimate_casted_this_turn') {
+          if (this.ultimateCastedThisTurn) {
+            this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+          }
+        }
+      }
+    }
 
-        if (timing === 'round_end' && statusType === 'burn' && instance.stacks > 0) {
-          const dmg = instance.stacks * 2;
-          this.player.hp -= dmg;
-          this._log(`🔥 玩家燃烧伤害 -${dmg} (${instance.stacks}层)`);
+    // Retain bonus (燕返)
+    if (cardDef.onCast?.conditional?.condition === 'was_retained' && isRetained) {
+      // Damage already boosted in _getDamageModifiers
+    }
+
+    // 淬毒护腕：首次伤害施加中毒
+    const poisonBrace = this.equipment.find(e => e.id === 'eq_poison_brace');
+    if (poisonBrace && !this._eqState.firstHitPoisonUsed && targetIds.length > 0) {
+      const enemy = this.enemies.find(e => e.id === targetIds[0]);
+      if (enemy) {
+        this._eqState.firstHitPoisonUsed = true;
+        this._applyStatus(enemy, 'poison', 2);
+      }
+    }
+
+    // 铁砂袋：重式额外破甲
+    const sandbag = this.equipment.find(e => e.id === 'eq_iron_sandbag');
+    if (sandbag && isHeavy && targetIds.length > 0) {
+      const enemy = this.enemies.find(e => e.id === targetIds[0]);
+      if (enemy) this._applyStatus(enemy, 'armorBreak', 1);
+    }
+
+    // 轻羽剑穗：0费牌+2护盾
+    const featherTassel = this.equipment.find(e => e.id === 'eq_feather_tassel');
+    if (featherTassel && this._calcCost(cardInst, cardDef) === 0 && !this._eqState.zeroCostShieldUsed) {
+      this._eqState.zeroCostShieldUsed = true;
+      this.shield += 2;
+      this._log('🪶 轻羽剑穗：+2护盾');
+    }
+  }
+
+  _executeSubEffects(effects, cardDef, targetIds, isHeavy) {
+    for (const eff of (effects || [])) {
+      if (eff.type === 'damage') {
+        if (eff.allEnemies) {
+          const alive = this.enemies.filter(e => e.alive);
+          for (const enemy of alive) {
+            for (let h = 0; h < (eff.hits || 1); h++) {
+              this._dealDamage(enemy.id, eff.multiplier, [cardDef.id], cardDef.hitPreset);
+            }
+          }
+        } else {
+          if (targetIds.length > 0) {
+            const enemy = this.enemies.find(e => e.id === targetIds[0]);
+            if (enemy) {
+              for (let h = 0; h < (eff.hits || 1); h++) {
+                this._dealDamage(enemy.id, eff.multiplier, [cardDef.id], cardDef.hitPreset);
+              }
+            }
+          }
+        }
+      } else if (eff.type === 'gain_shield') {
+        this.shield += eff.amount || 0;
+      } else if (eff.type === 'add_status') {
+        if (eff.allEnemies) {
+          for (const enemy of this.enemies.filter(e => e.alive)) {
+            this._applyStatus(enemy, eff.statusId, eff.stacks || 1);
+          }
+        } else if (targetIds.length > 0) {
+          const enemy = this.enemies.find(e => e.id === targetIds[0]);
+          if (enemy) this._applyStatus(enemy, eff.statusId, eff.stacks || 1);
         }
       }
     }
   }
 
+  _getDamageModifiers(cardDef, cardInst, target, isHeavy) {
+    let mult = 1.0;
 
-  // ============ TARGETING ============
-
-  _pickTarget(rule, skill) {
-    const alive = this.enemies.filter(e => e.alive);
-    if (alive.length === 0) return null;
-
-    switch (rule) {
-      case 'self': return this.player;
-      case 'random': return this.targetRng.pick(alive);
-      case 'lowest_hp':
-        return alive.reduce((a, b) => (a.hp / a.maxHp) <= (b.hp / b.maxHp) ? a : b);
-      case 'highest_hp':
-        return alive.reduce((a, b) => (a.hp / a.maxHp) >= (b.hp / b.maxHp) ? a : b);
-      case 'highest_armor':
-        return alive.reduce((a, b) => (a.defense || 0) >= (b.defense || 0) ? a : b);
-      case 'last_attacker':
-        return alive[0]; // Simplified
-      case 'all_enemies':
-        return alive[0]; // Handle in effect loop
-      default:
-        return this.targetRng.pick(alive);
+    // Proficiency bonus
+    const prof = this.proficiency[cardDef.id];
+    if (prof) {
+      const profMults = [1.0, 1.08, 1.18, 1.30, 1.45];
+      mult *= profMults[prof.level - 1] || 1.0;
     }
+
+    // Sword intent bonus for sword techniques/qi
+    if (cardDef.roleCategory === 'sword_technique' || cardDef.roleCategory === 'sword_qi') {
+      mult *= (1 + this.swordIntent * 0.10);
+    }
+
+    // Heavy bonus (武圣)
+    if (isHeavy) {
+      mult *= 1.60;
+      // Card-specific heavy bonus
+      if (cardDef.onCast?.heavyBonus) {
+        mult *= (1 + cardDef.onCast.heavyBonus);
+      }
+    }
+
+    // 混元劲 buff
+    if (this.buffs['hunyuan_power']) {
+      const b = this.buffs['hunyuan_power'];
+      mult *= (1 + b.value * b.stacks);
+    }
+
+    // 藏锋式 next damage bonus
+    if (this._nextDamageBonus && this._nextDamageBonus.tag === cardDef.roleCategory) {
+      mult *= (1 + this._nextDamageBonus.bonus);
+      this._nextDamageBonus = null;
+    }
+
+    // 断岳：第一张费用≥2的单体攻击+35%
+    const duanyue = this.signatureSword && this.signatureSword.id === 'sword_duanyue';
+    if (duanyue && !this._eqState.firstCost2Attacked && cardDef.energyCost >= 2 && cardDef.targetMode === 'enemy_single') {
+      this._eqState.firstCost2Attacked = true;
+      mult *= 1.35;
+      this._log('⚔️ 断岳：首张高费攻击+35%');
+    }
+
+    // 燕返保留加成
+    if (cardInst.retainedThisTurn && cardDef.onCast?.conditional?.condition === 'was_retained') {
+      mult *= 1.30;
+    }
+
+    // 裂脉扳指：攻击牌+22%
+    const splitVeinRing = this.equipment.find(e => e.id === 'eq_split_vein_ring');
+    if (splitVeinRing && cardDef.cardType === 'attack') {
+      mult *= 1.22;
+    }
+
+    // 踏月连环 combo bonus
+    if (cardDef.onCast?.comboPerUnique) {
+      mult *= (1 + this.uniqueCardsPlayedThisTurn.size * cardDef.onCast.comboPerUnique.bonus);
+    }
+
+    // Vulnerable on target
+    if (this._getStatusStacks(target, 'vulnerable') > 0) {
+      mult *= 1.25;
+    }
+
+    // Weak on caster
+    if (this._getPlayerStatusStacks('weak') > 0) {
+      mult *= 0.80;
+    }
+
+    return mult;
   }
 
-  // ============ HELPERS ============
-
-  _dealDamage(sourceId, targetId, amount, tags) {
-    let target;
-    if (targetId === 'player') {
-      target = this.player;
-    } else {
-      target = this.enemies.find(e => e.id === targetId);
+  _checkHeavy(cardDef) {
+    if (this.momentum >= 3 && (cardDef.roleCategory === 'fist' || cardDef.roleCategory === 'kick')) {
+      this.momentum = 0;
+      this._addEvent('resource_changed', { resource: 'momentum', value: 0 });
+      this._log('💥 重式触发！');
+      return true;
     }
-    if (!target || !target.alive) return;
+    return false;
+  }
 
+  _calcCost(cardInst, cardDef) {
+    let cost = cardDef.energyCost;
+
+    // 惊鸿：每回合第一张剑气费用-1
+    const jinghong = this.signatureSword && this.signatureSword.id === 'sword_jinghong';
+    if (jinghong && !this._eqState.firstQiDiscounted && cardDef.roleCategory === 'sword_qi') {
+      this._eqState.firstQiDiscounted = true;
+      cost = Math.max(0, cost - 1);
+    }
+
+    // 裂脉扳指：每回合第一张攻击牌费用+1
+    const splitVeinRing = this.equipment.find(e => e.id === 'eq_split_vein_ring');
+    if (splitVeinRing && cardDef.cardType === 'attack' && this.cardsPlayedThisTurn.length === 0) {
+      cost += 1;
+    }
+
+    return Math.max(0, cost);
+  }
+
+  // ---- DAMAGE ----
+
+  _dealDamage(enemyId, multiplier, tags, hitPreset) {
+    const enemy = this.enemies.find(e => e.id === enemyId);
+    if (!enemy || !enemy.alive) return 0;
+
+    let damage = this.atk * multiplier;
+
+    // Enemy defense mitigation
+    const totalDef = Math.max(0, enemy._originalDefense - (this._getStatusStacks(enemy, 'armorBreak') * 3));
+    const mitigation = totalDef / (totalDef + ARMOR_CONST);
+    damage *= (1 - mitigation);
+
+    // Enemy shield absorption
+    if (enemy.shield > 0) {
+      const absorbed = Math.min(enemy.shield, damage);
+      enemy.shield -= absorbed;
+      damage -= absorbed;
+    }
+
+    damage = Math.max(1, Math.floor(damage));
+    enemy.hp -= damage;
+
+    this._addEvent('damage', {
+      enemyId, amount: damage, tags, hitPreset,
+      hpRemaining: enemy.hp, maxHp: enemy.maxHp
+    });
+
+    if (enemy.hp <= 0) {
+      enemy.hp = 0;
+      enemy.alive = false;
+      this._addEvent('enemy_died', { enemyId, name: enemy.name });
+      this._log(`💀 ${enemy.name} 被击败！`);
+    }
+
+    return damage;
+  }
+
+  _applyDamageToPlayer(amount, sourceName, skillName, enemyId) {
     // Shield absorption
-    if (targetId === 'player' && this.hasShield > 0) {
-      const absorbed = Math.min(this.hasShield, amount);
-      this.hasShield -= absorbed;
+    if (this.shield > 0) {
+      const absorbed = Math.min(this.shield, amount);
+      this.shield -= absorbed;
       amount -= absorbed;
     }
 
     amount = Math.max(0, Math.floor(amount));
-    target.hp -= amount;
+    this.hp -= amount;
+    this._log(`${sourceName} 使用 ${skillName}，对你造成 ${amount} 点伤害`);
 
-    // 炽心玉：每回合首次造成伤害后回复2生命
-    if (sourceId === 'player' && amount > 0 && !this._eqState.chixinUsed) {
-      if (this.setup.equipment?.some(e => e.id === 'eq_chixin_yu')) {
-        this._eqState.chixinUsed = true;
-        this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2);
-        this._log('❤ 炽心玉：温养心火，回复2生命');
+    this._addEvent('player_damaged', { amount, sourceName, skillName, enemyId, hpRemaining: this.hp });
+
+    // Apply status from enemy
+    // Handled in _executeEnemyTurn
+
+    if (this.hp <= 0) {
+      this.hp = 0;
+      this.alive = false;
+    }
+  }
+
+  // ---- ENEMY SYSTEM ----
+
+  _generateAllIntents() {
+    for (const enemy of this.enemies) {
+      if (!enemy.alive) continue;
+      this._generateIntent(enemy);
+    }
+  }
+
+  _generateIntent(enemy) {
+    const def = enemy.definition;
+    if (!def || !def.intentPattern) return;
+
+    // Check boss phase transitions
+    if (enemy.phases && enemy.phases.length > 0) {
+      for (const phase of enemy.phases) {
+        if (enemy.hp / enemy.maxHp <= phase.hpThreshold && !enemy[`_phase_${phase.hpThreshold}_done`]) {
+          enemy[`_phase_${phase.hpThreshold}_done`] = true;
+          def.intentPattern.push({ ...phase.skillUnlock });
+          this._log(`🐉 ${enemy.name} 进入新阶段！解锁：${phase.skillUnlock.tags?.join(' ') || ''}`);
+        }
       }
     }
-    if (target.hp <= 0) {
-      target.hp = 0;
-      target.alive = false;
-      this._log(`💀 ${target.name || '玩家'} 被击败！`);
-    }
 
-    this._addEvent('damage', {
-      sourceId, targetId, amount, tags, hpRemaining: target.hp,
-      present: (sourceId === 'player' && this._present) ? this._present : null
+    // Filter available patterns
+    const available = def.intentPattern.filter(p => {
+      const cd = enemy.cooldowns[p.tags?.join(',') || p.intent] || 0;
+      return cd <= 0;
     });
-  }
 
-  _getCooldown(skillId) {
-    if (!this._cooldowns) this._cooldowns = {};
-    return this._cooldowns[skillId] || 0;
-  }
-
-  _setCooldown(skillId, rounds) {
-    if (!this._cooldowns) this._cooldowns = {};
-    this._cooldowns[skillId] = rounds;
-  }
-
-  _cooldownTick() {
-    if (!this._cooldowns) this._cooldowns = {};
-    for (const key of Object.keys(this._cooldowns)) {
-      if (this._cooldowns[key] > 0) this._cooldowns[key]--;
+    if (available.length === 0) {
+      this.enemyPlans[enemy.id] = {
+        enemyId: enemy.id,
+        intent: 'attack',
+        value: 1,
+        damagePerHit: 8,
+        hits: 1,
+        tags: ['普攻'],
+        previewText: '普攻 8伤害'
+      };
+      return;
     }
-    // Enemy cooldowns
+
+    const weighted = available.map(p => ({ value: p, weight: p.weight || 50 }));
+    const picked = this.aiRng.weightedPick(weighted);
+
+    // Set cooldown
+    if (picked.cooldown) {
+      const key = picked.tags?.join(',') || picked.intent;
+      enemy.cooldowns[key] = picked.cooldown + 1;
+    }
+
+    // Build preview text
+    let previewText = '';
+    if (picked.intent === 'attack') {
+      previewText = `${picked.hits > 1 ? pulled.hits + '×' : ''}${picked.damagePerHit * (picked.hits || 1)}伤害`;
+      if (picked.applyStatus) {
+        previewText += ` +${picked.applyStatus.stacks}层${STATUS[picked.applyStatus.statusId]?.name || ''}`;
+      }
+    } else if (picked.intent === 'shield') {
+      previewText = `护盾${picked.value}`;
+    } else if (picked.intent === 'buff') {
+      previewText = `强化`;
+    } else if (picked.intent === 'buff_ally') {
+      previewText = `保护队友 +${picked.value}护盾`;
+    }
+
+    if (picked.tags?.length) previewText += ` [${picked.tags.join('/')}]`;
+
+    this.enemyPlans[enemy.id] = {
+      enemyId: enemy.id,
+      ...picked,
+      previewText
+    };
+
+    this._addEvent('intent_generated', { enemyId: enemy.id, plan: this.enemyPlans[enemy.id] });
+  }
+
+  _executeEnemyTurn() {
+    // Tick cooldowns
     for (const enemy of this.enemies) {
-      for (const key of Object.keys(enemy.cooldowns || {})) {
+      for (const key of Object.keys(enemy.cooldowns)) {
         if (enemy.cooldowns[key] > 0) enemy.cooldowns[key]--;
       }
     }
-    // Round start: reset took damage & equipment round states
-    this.tookDamageLastRound = false;
-    this._eqState.chixinUsed = false;
 
-    // 装备：每回合开始回血 / 护盾 / 蓄势
-    if (this._eq.hpRegenRound > 0) {
-      this.player.hp = Math.min(this.player.maxHp, this.player.hp + this._eq.hpRegenRound);
-      this._log(`❤ 吐纳回血 +${this._eq.hpRegenRound}`);
+    // Execute enemy actions in order
+    const aliveEnemies = this.enemies.filter(e => e.alive);
+    for (const enemy of aliveEnemies) {
+      if (!this.alive) break;
+
+      const plan = this.enemyPlans[enemy.id];
+      if (!plan) continue;
+
+      // Tick statuses on enemy at start of its turn
+      this._tickEnemyStatuses(enemy, 'owner_turn_end');
+
+      if (plan.intent === 'attack') {
+        const totalDmg = (plan.damagePerHit || 10) * (plan.hits || 1);
+        this._applyDamageToPlayer(totalDmg, enemy.name, plan.tags?.join('/') || '攻击', enemy.id);
+
+        if (plan.applyStatus) {
+          this._applyPlayerStatus(plan.applyStatus.statusId, plan.applyStatus.stacks);
+        }
+      } else if (plan.intent === 'shield') {
+        enemy.shield += plan.value || 0;
+        this._log(`${enemy.name} 获得护盾 +${plan.value}`);
+        if (plan.heal) {
+          enemy.hp = Math.min(enemy.maxHp, enemy.hp + plan.heal);
+          this._log(`${enemy.name} 回复 +${plan.heal}`);
+        }
+      } else if (plan.intent === 'buff') {
+        if (plan.value?.defUp) {
+          enemy._originalDefense += plan.value.defUp;
+          enemy.defense = enemy._originalDefense;
+          this._log(`${enemy.name} 防御 +${plan.value.defUp}`);
+        }
+        if (plan.value?.atkUp) {
+          this._log(`${enemy.name} 攻击力提升`);
+        }
+      } else if (plan.intent === 'buff_ally') {
+        const ally = this.enemies.filter(e => e.alive && e.id !== enemy.id)
+          .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))[0];
+        if (ally) {
+          ally.shield += plan.value || 0;
+          this._log(`${enemy.name} 保护 ${ally.name} +${plan.value}护盾`);
+        }
+      }
     }
-    if (this._eq.roundShieldPct > 0) {
-      const s = Math.floor(this.player.maxHp * this._eq.roundShieldPct);
-      this.hasShield += s;
-      this._log(`🛡 周天护盾 +${s}`);
-    }
-    if (this._eq.momentumPerRound > 0) {
-      this.momentum = Math.min(this._momentumMax(), this.momentum + this._eq.momentumPerRound);
+
+    if (!this.alive) {
+      this.phase = 'defeat';
     }
   }
 
-  _processBuffs() {
-    // Reset enemy damage taken multiplier each round
-    for (const enemyId of Object.keys(this.enemyBuffs)) {
-      this.enemyBuffs[enemyId].damageTakenMult = 1;
+  _tickEnemyStatuses(enemy, timing) {
+    if (!enemy.statuses) return;
+    const toRemove = [];
+    for (const [statusId, instance] of Object.entries(enemy.statuses)) {
+      const statusDef = STATUS[statusId];
+      if (!statusDef) continue;
+
+      // Poison tick
+      if (timing === 'owner_turn_end' && statusId === 'poison' && instance.stacks > 0) {
+        const dmg = instance.stacks;
+        enemy.hp -= dmg;
+        this._addEvent('damage', { enemyId: enemy.id, amount: dmg, tags: ['poison'], hpRemaining: enemy.hp, maxHp: enemy.maxHp });
+        this._log(`☠ ${enemy.name} 中毒伤害 -${dmg} (${instance.stacks}层)`);
+
+        // 百毒囊：首次中毒结算不减少层数
+        const poisonSac = this.equipment.find(e => e.id === 'eq_poison_sac');
+        if (poisonSac && !this._eqState.firstPoisonNoDecayUsed[enemy.id]) {
+          this._eqState.firstPoisonNoDecayUsed[enemy.id] = true;
+          this._log('☠ 百毒囊：中毒层数保持');
+        } else {
+          instance.stacks = Math.max(0, instance.stacks - 1);
+        }
+
+        if (enemy.hp <= 0) {
+          enemy.hp = 0;
+          enemy.alive = false;
+        }
+      }
+
+      // Decay
+      if (statusDef.decayTiming === 'round_end' || statusDef.decayTiming === 'owner_turn_end') {
+        instance.stacks = Math.max(0, instance.stacks - (statusDef.decay || 0));
+      }
+
+      if (instance.stacks <= 0) toRemove.push(statusId);
+    }
+
+    for (const sid of toRemove) {
+      delete enemy.statuses[sid];
+    }
+    // Update defense from armorBreak
+    enemy.defense = Math.max(0, enemy._originalDefense - (enemy.statuses?.armorBreak?.stacks || 0) * 3);
+  }
+
+  _applyStatus(enemy, statusId, stacks) {
+    if (!enemy || !enemy.alive) return;
+    if (!enemy.statuses) enemy.statuses = {};
+    const statusDef = STATUS[statusId];
+    if (!statusDef) return;
+
+    const existing = enemy.statuses[statusId];
+    const current = existing ? existing.stacks : 0;
+    enemy.statuses[statusId] = { stacks: Math.min(statusDef.maxStacks, current + stacks) };
+    this._log(`${enemy.name} ${statusDef.name} +${stacks} (${enemy.statuses[statusId].stacks}层)`);
+
+    // 破阵符：精英/Boss破甲3层触发
+    if (statusId === 'armorBreak' && enemy.statuses[statusId].stacks >= 3) {
+      const breakerTalisman = this.equipment.find(e => e.id === 'eq_breaker_talisman');
+      if (breakerTalisman && !this._eqState.armorBreak3Used && (enemy.definition?.type === 'elite' || enemy.definition?.type === 'boss')) {
+        this._eqState.armorBreak3Used = true;
+        this._drawCards(2);
+        this.energy = Math.min(this.maxEnergy, this.energy + 1);
+        this._log('💥 破阵符：抽2张+1能量');
+      }
+    }
+  }
+
+  _applyPlayerStatus(statusId, stacks) {
+    if (!this._playerStatuses) this._playerStatuses = {};
+    const statusDef = STATUS[statusId];
+    if (!statusDef) return;
+    const current = this._playerStatuses[statusId]?.stacks || 0;
+    this._playerStatuses[statusId] = { stacks: Math.min(statusDef.maxStacks, current + stacks) };
+  }
+
+  _getStatusStacks(enemy, statusId) {
+    return enemy?.statuses?.[statusId]?.stacks || 0;
+  }
+
+  _getPlayerStatusStacks(statusId) {
+    return this._playerStatuses?.[statusId]?.stacks || 0;
+  }
+
+  // ---- SIGNATURE SWORD EFFECTS ----
+
+  _applySignatureSwordEffect(cardDef) {
+    if (!this.signatureSword) return;
+
+    // 流光：不同名连段
+    if (this.signatureSword.id === 'sword_liuguang') {
+      if (this._eqState.chain3DiffCards.length === 0 || this._eqState.chain3DiffCards[this._eqState.chain3DiffCards.length - 1] !== cardDef.id) {
+        this._eqState.chain3DiffCards.push(cardDef.id);
+        if (this._eqState.chain3DiffCards.length === 3) {
+          const unique = new Set(this._eqState.chain3DiffCards);
+          if (unique.size === 3) {
+            this._drawCards(1);
+            this.shield += 4;
+            this._log('✨ 流光：连段奖励！抽1牌+4护盾');
+          }
+          this._eqState.chain3DiffCards = [];
+        }
+      }
+    }
+
+    // 惊鸿：第一张剑气≥2费打出后抽1张
+    if (this.signatureSword.id === 'sword_jinghong') {
+      if (cardDef.roleCategory === 'sword_qi' && cardDef.energyCost >= 2 && this._eqState.firstQiDiscounted) {
+        this._drawCards(1);
+        this._log('⚡ 惊鸿：高费剑气奖励抽1张');
+      }
+    }
+
+    // 断岳：第一张≥2费单体攻击击杀+1能量
+    if (this.signatureSword.id === 'sword_duanyue') {
+      if (this._eqState.firstCost2Attacked) {
+        const target = this.enemies.find(e => !e.alive && e.definition);
+        if (target) {
+          this.energy = Math.min(this.maxEnergy, this.energy + 1);
+          this._log('⚔️ 断岳：击杀！+1能量');
+        }
+      }
+    }
+  }
+
+  // ---- PROFICIENCY ----
+
+  _gainProficiency(cardId, cardDef) {
+    if (!this.proficiency[cardId]) this.proficiency[cardId] = { xp: 0, level: 1 };
+
+    let xpGain = 1;
+    // 训练手册：首次+3
+    const trainingManual = this.equipment.find(e => e.id === 'eq_training_manual');
+    if (trainingManual && !this._eqState.firstCastXpUsed) {
+      xpGain += 3;
+      this._eqState.firstCastXpUsed = true;
+    }
+
+    this.proficiency[cardId].xp += xpGain;
+    const newLevel = this._getProficiencyLevel(this.proficiency[cardId].xp);
+    if (newLevel > this.proficiency[cardId].level) {
+      this.proficiency[cardId].level = newLevel;
+      this.pendingUpgrades.push(cardId);
+      this._log(`⭐ ${cardDef.name} 熟练度提升到 Lv${newLevel}！`);
+      this._addEvent('proficiency_changed', { cardId, level: newLevel });
     }
   }
 
   _getProficiencyLevel(xp) {
-    if (xp >= 48) return 5;
-    if (xp >= 26) return 4;
-    if (xp >= 12) return 3;
-    if (xp >= 4) return 2;
+    if (xp >= 55) return 5;
+    if (xp >= 30) return 4;
+    if (xp >= 14) return 3;
+    if (xp >= 5) return 2;
     return 1;
   }
 
-  _applySignatureSword(sword, skill) {
-    // 流光: 3 different skills bonus
-    if (sword.id === 'sword_liuguang') {
-      if (!this._swordChain) this._swordChain = [];
-      if (this._swordChain.length === 0 || this._swordChain[this._swordChain.length - 1] !== skill.id) {
-        this._swordChain.push(skill.id);
-        if (this._swordChain.length > 3) this._swordChain.shift();
-        if (this._swordChain.length === 3 && new Set(this._swordChain).size === 3) {
-          this.swordIntent += 1;
-          this._log('✨ 流光：连续3次不同技能，剑意 +1 点！');
-          // 点满 3 即自动升层
-          if (this.swordIntent >= 3 && this.swordIntentLevel < 3) {
-            this.swordIntentLevel++;
-            this.swordIntent -= 3;
-            this._log(`⬆ 剑意突破！层数升为 ${this.swordIntentLevel} / 3`);
-          }
-          this._swordChain = [];
-        }
-      }
+  // ---- CHECKS ----
+
+  _checkEndConditions() {
+    if (this.hp <= 0) {
+      this.hp = 0;
+      this.alive = false;
+      this.phase = 'defeat';
+      this._addEvent('defeat', {});
     }
+    if (this.enemies.every(e => !e.alive)) {
+      this.phase = 'victory';
+      this._addEvent('victory', {});
+    }
+  }
+
+  // ---- PUBLIC API ----
+
+  /** Start battle - draw first hand */
+  begin() {
+    this.energy = this.maxEnergy;
+    this._drawCards(this.setup.character.baseDraw);
+    this.phase = 'player_input';
+    this._log(`--- 战斗开始 ---`);
+    this._log(`⚡ 能量: ${this.energy}/${this.maxEnergy} | 抽牌: ${this.hand.length}张`);
+  }
+
+  /** Get full state for UI */
+  getState() {
+    return {
+      round: this.round,
+      phase: this.phase,
+      player: {
+        hp: this.hp, maxHp: this.maxHp, atk: this.atk,
+        shield: this.shield, alive: this.alive
+      },
+      enemies: this.enemies.map(e => ({
+        id: e.id, name: e.name, hp: e.hp, maxHp: e.maxHp,
+        defense: e.defense, alive: e.alive, shield: e.shield,
+        statuses: e.statuses, type: e.definition?.type || 'normal',
+        color: e.definition?.color || '#b8a684',
+        tags: e.definition?.tags || []
+      })),
+      swordIntent: this.swordIntent,
+      momentum: this.momentum,
+      energy: this.energy,
+      maxEnergy: this.maxEnergy,
+      hand: this.hand,
+      drawPileCount: this.drawPile.length,
+      discardPileCount: this.discardPile.length,
+      exhaustPileCount: this.exhaustPile.length,
+      enemyPlans: this.enemyPlans,
+      log: [...this.battleLog],
+      events: [...this.events],
+      proficiency: this.proficiency,
+      pendingUpgrades: [...this.pendingUpgrades]
+    };
+  }
+
+  getResult() {
+    if (this.phase === 'victory') return { isOver: true, victory: true };
+    if (this.phase === 'defeat') return { isOver: true, defeat: true };
+    return { isOver: false };
+  }
+
+  /** Get card info for hand display */
+  getCardInfo(cardInstanceId) {
+    const ci = this.cardInstances[cardInstanceId];
+    if (!ci) return null;
+    const cd = ALL_CARDS[ci.cardId];
+    if (!cd) return null;
+    return {
+      instanceId: ci.instanceId,
+      cardId: ci.cardId,
+      name: cd.name,
+      cardType: cd.cardType,
+      roleCategory: cd.roleCategory,
+      energyCost: this._calcCost(ci, cd),
+      originalCost: cd.energyCost,
+      targetMode: cd.targetMode,
+      tags: cd.tags,
+      pileKeywords: cd.pileKeywords,
+      desc: cd.desc,
+      hitPreset: cd.hitPreset,
+      castSfx: cd.castSfx,
+      impactSfx: cd.impactSfx,
+      retainedThisTurn: ci.retainedThisTurn,
+      isCostDiscounted: this._calcCost(ci, cd) < cd.energyCost
+    };
+  }
+
+  getHandCards() {
+    return this.hand.map(ciid => this.getCardInfo(ciid)).filter(Boolean);
+  }
+
+  canPlayCard(cardInstanceId) {
+    if (this.phase !== 'player_input') return false;
+    const ci = this.cardInstances[cardInstanceId];
+    if (!ci) return false;
+    const cd = ALL_CARDS[ci.cardId];
+    if (!cd) return false;
+    return this.energy >= this._calcCost(ci, cd);
+  }
+
+  canUltimate() {
+    return this.phase === 'player_input' && this.swordIntent >= 3 && !!this.setup.character.ultimate;
+  }
+
+  getAliveEnemyIds() {
+    return this.enemies.filter(e => e.alive).map(e => e.id);
   }
 
   _log(msg) {
