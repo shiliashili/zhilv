@@ -1346,9 +1346,9 @@ class GameController {
                 <button class="btn btn-secondary btn-sm" onclick="game.buyHeal(30)">疗愈</button>
               </div>
               <div class="shop-item">
-                <span>遗忘 · 移除一个技能</span>
+                <span>随机遗忘 · 移除随机一个技能</span>
                 <span>35 物资</span>
-                <button class="btn btn-secondary btn-sm" onclick="game.removeSkill()">遗忘</button>
+                <button class="btn btn-secondary btn-sm" onclick="game.forgetRandomSkill()">随机遗忘</button>
               </div>
             </div>
           </div>
@@ -1385,13 +1385,45 @@ class GameController {
     this.showShop();
   }
 
-  removeSkill() {
+  forgetRandomSkill() {
     if (this.skills.length <= 1) return;
     audio.playUiClick();
     if (this.supply < 35) return;
+    const idx = this.rng.nextInt(0, this.skills.length - 1);
+    const removed = this.skills[idx];
+    this.skills.splice(idx, 1);
+    delete this.proficiency[removed.id];
     this.supply -= 35;
-    this.skills.pop();
-    this.showShop();
+    this._renderAfterForget(`随机遗忘了【${removed.name}】`);
+  }
+
+  forgetSkill(skillId) {
+    if (this.skills.length <= 1) return;
+    audio.playUiClick();
+    if (this.supply < 50) return;
+    const idx = this.skills.findIndex(s => s.id === skillId);
+    if (idx < 0) return;
+    const removed = this.skills[idx];
+    this.skills.splice(idx, 1);
+    delete this.proficiency[removed.id];
+    this.supply -= 50;
+    this._renderAfterForget(`遗忘了【${removed.name}】`);
+  }
+
+  _renderAfterForget(msg) {
+    if (msg) this.toast(msg);
+    if (this.state === 'upgrade') this.showUpgrade();
+    else this.showShop();
+  }
+
+  // 轻量提示（无需阻断操作）
+  toast(text) {
+    if (typeof document === 'undefined') return;
+    const el = document.createElement('div');
+    el.className = 'wl-toast';
+    el.textContent = text;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1600);
   }
 
   // ============ REST ============
@@ -1593,18 +1625,30 @@ class GameController {
           <h2>改 造 站</h2>
           <p>锤炼技艺，百炼成钢。物资 <span style="color:var(--gold-bright)">${this.supply}</span></p>
 
+          <div class="upgrade-actions">
+            <button class="btn btn-ghost btn-sm" onclick="game.forgetRandomSkill()" ${this.supply >= 35 ? '' : 'disabled'}>
+              35 物资 · 随机遗忘一个技能
+            </button>
+          </div>
+
           <div class="upgrade-list">
             ${this.skills.map(s => {
               const prof = this.proficiency[s.id];
+              const canForget = this.skills.length > 1 && this.supply >= 50;
               return `
                 <div class="upgrade-item">
                   <div class="upgrade-info">
                     <div class="upgrade-name">${s.name} <span class="tag">Lv${prof?.level || 1}</span></div>
                     <div class="upgrade-desc">${s.desc}</div>
                   </div>
-                  <button class="btn btn-secondary btn-sm" onclick="game.upgradeSkill('${s.id}')">
-                    65 物资 升级
-                  </button>
+                  <div class="upgrade-btns">
+                    <button class="btn btn-secondary btn-sm" onclick="game.upgradeSkill('${s.id}')" ${this.supply >= 65 ? '' : 'disabled'}>
+                      65 物资 升级
+                    </button>
+                    <button class="btn btn-ghost btn-sm" onclick="game.forgetSkill('${s.id}')" ${canForget ? '' : 'disabled'}>
+                      50 物资 遗忘
+                    </button>
+                  </div>
                 </div>
               `;
             }).join('')}

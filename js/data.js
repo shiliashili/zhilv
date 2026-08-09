@@ -195,59 +195,59 @@ const SIGNATURE_SWORDS = [
 ];
 
 // ---- Character Skills ----
-// 剑圣 (Swordsman) skills
+// 剑圣 (Swordsman) skills —— 伤害为具体数值（每 hit）
 const SWORDSMAN_SKILLS = [
   { id: 's_cloud_stab', name: '流云刺', category: 'sword_technique', tag: '剑技',
     baseWeight: 120, cooldown: 0, target: 'lowest_hp',
-    desc: '0.70×2；命中后+1剑意',
-    effects: [{ type: 'damage', base: 0.70, hits: 2 }],
+    desc: '造成 2 段 ×12 伤害；命中后+1剑意',
+    effects: [{ type: 'damage', base: 12, hits: 2 }],
     onHit: { swordIntent: 1 },
     hitPreset: 'light', castSfx: 'blade_light', impactSfx: 'blade_light' },
 
   { id: 's_whirlwind', name: '回风斩', category: 'sword_technique', tag: '剑技',
     baseWeight: 105, cooldown: 0, target: 'random',
-    desc: '1.05×；若上次技能不同，再追加0.45×',
-    effects: [{ type: 'damage', base: 1.05, hits: 1 }],
+    desc: '造成 18 伤害；若上次技能不同，再追加 8 伤害',
+    effects: [{ type: 'damage', base: 18, hits: 1 }],
     chainBonus: { damage: 0.45, condition: 'different_skill' },
     onHit: { swordIntent: 1 },
     hitPreset: 'light', castSfx: 'blade_light', impactSfx: 'blade_light' },
 
   { id: 's_swallow_return', name: '燕返', category: 'sword_technique', tag: '剑技',
     baseWeight: 85, cooldown: 1, target: 'highest_hp',
-    desc: '1.45×；若上一招为剑气，本次+35%',
-    effects: [{ type: 'damage', base: 1.45, hits: 1 }],
+    desc: '造成 25 伤害；若上一招为剑气，本次+9伤害',
+    effects: [{ type: 'damage', base: 25, hits: 1 }],
     conditionBonus: { damage: 0.35, condition: 'last_skill_qi' },
     onHit: { swordIntent: 1 },
     hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
 
   { id: 's_moon_combo', name: '踏月连环', category: 'sword_technique', tag: '剑技',
     baseWeight: 70, cooldown: 1, target: 'random',
-    desc: '0.42×4；每段独立判定暴击；总计只+1剑意',
-    effects: [{ type: 'damage', base: 0.42, hits: 4, critPerHit: true }],
+    desc: '造成 4 段 ×7 伤害；每段独立判定暴击；总计只+1剑意',
+    effects: [{ type: 'damage', base: 7, hits: 4, critPerHit: true }],
     onHit: { swordIntent: 1 },
     hitPreset: 'standard', castSfx: 'blade_multi', impactSfx: 'blade_multi', multiHit: true },
 
   { id: 's_forest_pierce', name: '穿林破影', category: 'sword_technique', tag: '剑技',
     baseWeight: 90, cooldown: 0, target: 'lowest_hp',
-    desc: '1.20×；目标生命<50%时再追击0.55×',
-    effects: [{ type: 'damage', base: 1.20, hits: 1 }],
+    desc: '造成 20 伤害；目标生命<50%时再追击 11 伤害',
+    effects: [{ type: 'damage', base: 20, hits: 1 }],
     executeBonus: { threshold: 0.50, chaseDamage: 0.55 },
     onHit: { swordIntent: 1 },
     hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
 
   { id: 's_reflect_sword', name: '折光回剑', category: 'sword_technique', tag: '剑技',
     baseWeight: 75, cooldown: 1, target: 'last_attacker',
-    desc: '1.30×；若上一轮受到伤害，本次效果+30%',
-    effects: [{ type: 'damage', base: 1.30, hits: 1 }],
+    desc: '造成 22 伤害；若上一轮受到伤害，本次+7伤害',
+    effects: [{ type: 'damage', base: 22, hits: 1 }],
     revengeBonus: { damage: 0.30, condition: 'took_damage_last_round' },
     onHit: { swordIntent: 1 },
     hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
 
   { id: 's_green_edge_qi', name: '青锋剑气', category: 'sword_qi', tag: '剑气',
     baseWeight: 100, cooldown: 0, target: 'lowest_hp',
-    desc: '基础1.25×；盛放：2.05×（消耗2剑意）',
-    effects: [{ type: 'damage', base: 1.25, hits: 1 }],
-    bloomEffect: { type: 'damage', base: 2.05, hits: 1 },
+    desc: '基础 21 伤害；盛放：35 伤害（消耗2剑意）',
+    effects: [{ type: 'damage', base: 21, hits: 1 }],
+    bloomEffect: { type: 'damage', base: 35, hits: 1 },
     bloomCost: 2,
     hitPreset: 'standard', bloomPreset: 'heavy',
     castSfx: 'sword_qi', bloomSfx: 'sword_qi_bloom',
@@ -255,9 +255,9 @@ const SWORDSMAN_SKILLS = [
 
   { id: 's_river_qi', name: '横江剑气', category: 'sword_qi', tag: '剑气',
     baseWeight: 70, cooldown: 1, target: 'all_enemies',
-    desc: '基础全体0.65×；盛放：全体1.05×',
-    effects: [{ type: 'damage', base: 0.65, hits: 1, allEnemies: true }],
-    bloomEffect: { type: 'damage', base: 1.05, hits: 1, allEnemies: true },
+    desc: '基础全体 11 伤害；盛放：全体 18 伤害',
+    effects: [{ type: 'damage', base: 11, hits: 1, allEnemies: true }],
+    bloomEffect: { type: 'damage', base: 18, hits: 1, allEnemies: true },
     bloomCost: 2,
     hitPreset: 'standard', bloomPreset: 'heavy',
     castSfx: 'sword_qi', bloomSfx: 'sword_qi_bloom',
@@ -265,9 +265,9 @@ const SWORDSMAN_SKILLS = [
 
   { id: 's_hundred_step_frost', name: '百步飞霜', category: 'sword_qi', tag: '剑气',
     baseWeight: 55, cooldown: 2, target: 'lowest_hp',
-    desc: '基础1.55×；盛放：2.40×，普通敌人<15%生命处决',
-    effects: [{ type: 'damage', base: 1.55, hits: 1 }],
-    bloomEffect: { type: 'damage', base: 2.40, hits: 1, execute: 0.15 },
+    desc: '基础 26 伤害；盛放：41 伤害，普通敌人<15%生命处决',
+    effects: [{ type: 'damage', base: 26, hits: 1 }],
+    bloomEffect: { type: 'damage', base: 41, hits: 1, execute: 0.15 },
     bloomCost: 2,
     hitPreset: 'heavy', bloomPreset: 'execute',
     castSfx: 'sword_qi', bloomSfx: 'sword_qi_bloom',
@@ -275,9 +275,9 @@ const SWORDSMAN_SKILLS = [
 
   { id: 's_sword_rain', name: '剑雨千寻', category: 'sword_qi', tag: '剑气',
     baseWeight: 50, cooldown: 2, target: 'random',
-    desc: '基础0.30×5；盛放改为0.32×8',
-    effects: [{ type: 'damage', base: 0.30, hits: 5 }],
-    bloomEffect: { type: 'damage', base: 0.32, hits: 8 },
+    desc: '基础 7 伤害 ×5 段；盛放改为 7 伤害 ×8 段',
+    effects: [{ type: 'damage', base: 7, hits: 5 }],
+    bloomEffect: { type: 'damage', base: 7, hits: 8 },
     bloomCost: 2,
     hitPreset: 'light', bloomPreset: 'standard',
     castSfx: 'sword_qi', bloomSfx: 'sword_qi_bloom',
@@ -285,8 +285,8 @@ const SWORDSMAN_SKILLS = [
 
   { id: 's_ten_thousand_swords', name: '万剑归流', category: 'sword_qi', tag: '剑气·绝技',
     baseWeight: 28, cooldown: 3, target: 'random',
-    desc: '消耗当前全部剑意；基础4段，每消耗1剑意+1段，每段0.34×',
-    effects: [{ type: 'damage', base: 0.34, hits: 4 }],
+    desc: '消耗当前全部剑意；基础4段，每消耗1剑意+1段，每段 8 伤害',
+    effects: [{ type: 'damage', base: 8, hits: 4 }],
     consumeAllIntent: true, extraHitsPerIntent: 1,
     hitPreset: 'standard', sweetener: 'heavy',
     castSfx: 'sword_qi_bloom', impactSfx: 'sword_qi_bloom',
@@ -294,77 +294,77 @@ const SWORDSMAN_SKILLS = [
 
   { id: 's_one_sword_sky', name: '一剑开天', category: 'sword_technique', tag: '剑技·绝技',
     baseWeight: 24, cooldown: 3, target: 'highest_hp',
-    desc: '2.80×；剑意≥4时自动消耗全部剑意，改为4.60×并获得重击处决演出',
-    effects: [{ type: 'damage', base: 2.80, hits: 1 }],
-    intentBoost: { threshold: 4, damage: 4.60, consumeAll: true },
+    desc: '造成 48 伤害；剑意≥4时自动消耗全部剑意，改为 78 伤害并触发重击处决演出',
+    effects: [{ type: 'damage', base: 48, hits: 1 }],
+    intentBoost: { threshold: 4, damage: 78, consumeAll: true },
     hitPreset: 'execute', sweetener: 'execute',
     castSfx: 'sword_qi_bloom', impactSfx: 'execute',
     tier: 'custom' }
 ];
 
-// 武圣 (Martial Artist) skills
+// 武圣 (Martial Artist) skills —— 伤害为具体数值（每 hit）
 const MARTIALARTIST_SKILLS = [
   { id: 'm_mountain_fist', name: '开山拳', category: 'fist', tag: '拳法',
     baseWeight: 125, cooldown: 0, target: 'highest_hp',
-    desc: '1.55×；无复杂条件',
-    effects: [{ type: 'damage', base: 1.55, hits: 1 }],
+    desc: '造成 28 伤害；无复杂条件',
+    effects: [{ type: 'damage', base: 28, hits: 1 }],
     hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
 
   { id: 'm_cannon_fist', name: '崩山炮拳', category: 'fist', tag: '拳法',
     baseWeight: 80, cooldown: 1, target: 'highest_hp',
-    desc: '2.15×；目标生命>70%时+20%',
-    effects: [{ type: 'damage', base: 2.15, hits: 1 }],
+    desc: '造成 39 伤害；目标生命>70%时+8伤害',
+    effects: [{ type: 'damage', base: 39, hits: 1 }],
     conditionBonus: { damage: 0.20, condition: 'target_hp_above_70' },
     hitPreset: 'heavy', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
 
   { id: 'm_chain_fist', name: '连环炮拳', category: 'fist', tag: '拳法',
     baseWeight: 95, cooldown: 0, target: 'lowest_hp',
-    desc: '0.72×3；三拳命中同一目标',
-    effects: [{ type: 'damage', base: 0.72, hits: 3 }],
+    desc: '造成 3 段 ×13 伤害；三拳命中同一目标',
+    effects: [{ type: 'damage', base: 13, hits: 3 }],
     hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy', multiHit: true },
 
   { id: 'm_armor_break_fist', name: '碎甲拳', category: 'fist', tag: '拳法',
     baseWeight: 85, cooldown: 1, target: 'highest_armor',
-    desc: '1.45×＋破甲2；若已破甲则改为1.95×',
-    effects: [{ type: 'damage', base: 1.45, hits: 1 }],
+    desc: '造成 26 伤害＋破甲2；若已破甲则改为约 50 伤害',
+    effects: [{ type: 'damage', base: 26, hits: 1 }],
     applyStatus: { status: 'armorBreak', stacks: 2 },
     armorBrokenBonus: { damage: 1.95 },
     hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
 
   { id: 'm_overlord_fist', name: '霸王冲拳', category: 'fist', tag: '拳法·绝技',
     baseWeight: 32, cooldown: 3, target: 'highest_hp',
-    desc: '3.10×；重式时额外×1.25，并带处决',
-    effects: [{ type: 'damage', base: 3.10, hits: 1 }],
+    desc: '造成 56 伤害；重式时额外+14，并带处决',
+    effects: [{ type: 'damage', base: 56, hits: 1 }],
     heavyBonus: { multiplier: 1.25, execute: true },
     hitPreset: 'execute', sweetener: 'execute',
     castSfx: 'fist_heavy', impactSfx: 'execute', tier: 'custom' },
 
   { id: 'm_ground_split_kick', name: '裂地踢', category: 'kick', tag: '脚法',
     baseWeight: 110, cooldown: 0, target: 'lowest_hp',
-    desc: '1.65×；目标<50%生命时+20%',
-    effects: [{ type: 'damage', base: 1.65, hits: 1 }],
+    desc: '造成 30 伤害；目标<50%生命时+6伤害',
+    effects: [{ type: 'damage', base: 30, hits: 1 }],
     conditionBonus: { damage: 0.20, condition: 'target_hp_below_50' },
     hitPreset: 'standard', castSfx: 'kick_heavy', impactSfx: 'kick_heavy' },
 
   { id: 'm_sweep_kick', name: '扫堂腿', category: 'kick', tag: '脚法',
     baseWeight: 75, cooldown: 1, target: 'all_enemies',
-    desc: '全体0.95×；2+敌人时权重×1.4',
-    effects: [{ type: 'damage', base: 0.95, hits: 1, allEnemies: true }],
+    desc: '全体 17 伤害；2+敌人时权重×1.4',
+    effects: [{ type: 'damage', base: 17, hits: 1, allEnemies: true }],
     weightCondition: { multiplier: 1.4, condition: 'enemies_ge_2' },
     hitPreset: 'standard', castSfx: 'kick_heavy', impactSfx: 'kick_heavy' },
 
   { id: 'm_chase_kick', name: '追命腿', category: 'kick', tag: '脚法',
     baseWeight: 65, cooldown: 1, target: 'lowest_hp',
-    desc: '1.95×，带处决',
-    effects: [{ type: 'damage', base: 1.95, hits: 1 }],
+    desc: '造成 35 伤害，带处决',
+    effects: [{ type: 'damage', base: 35, hits: 1 }],
     execute: true,
     hitPreset: 'heavy', sweetener: 'execute',
     castSfx: 'kick_heavy', impactSfx: 'execute' },
 
   { id: 'm_sky_heavy_kick', name: '裂空重踢', category: 'kick', tag: '脚法·绝技',
     baseWeight: 38, cooldown: 2, target: 'highest_hp',
-    desc: '2.65×；若为重式则本次暴击伤害额外+35%',
-    effects: [{ type: 'damage', base: 2.65, hits: 1 }],
+    desc: '造成 48 伤害；若为重式则本次暴击伤害额外+35%',
+    effects: [{ type: 'damage', base: 48, hits: 1 }],
     heavyBonus: { critDamage: 0.35 },
     hitPreset: 'execute', sweetener: 'execute',
     castSfx: 'kick_heavy', impactSfx: 'execute', tier: 'custom' },
@@ -396,7 +396,7 @@ const MARTIALARTIST_SKILLS = [
 const CHARACTERS = {
   swordsman: {
     id: 'swordsman', name: '剑圣', className: '剑圣', glyph: '剑',
-    maxHp: 82, skillSlots: 6,
+    maxHp: 95, atk: 23, skillSlots: 6,
     startingSkills: ['s_cloud_stab', 's_whirlwind', 's_green_edge_qi'],
     skillPool: SWORDSMAN_SKILLS,
     resource: { name: '剑意', key: 'swordIntent', max: 6, start: 0 },
@@ -407,7 +407,7 @@ const CHARACTERS = {
   },
   martialArtist: {
     id: 'martialArtist', name: '武圣', className: '武圣', glyph: '武',
-    maxHp: 92, skillSlots: 6,
+    maxHp: 92, atk: 18, skillSlots: 6,
     startingSkills: ['m_mountain_fist', 'm_ground_split_kick', 'm_hunyuan_force'],
     skillPool: MARTIALARTIST_SKILLS,
     resource: { name: '蓄势', key: 'momentum', max: 3, start: 0 },
@@ -473,29 +473,29 @@ const ENEMIES = [
   { id: 'e_elite_fire_lord', glyph: '焰', color: '#e0604a', name: '烈焰领主', type: 'elite', maxHp: 75, defense: 5, speed: 5,
     tags: ['高爆发', '状态'],
     skills: [
-      { name: '地狱火', weight: 50, damage: 16, status: { type: 'burn', stacks: 3 }, target: 'player' },
-      { name: '火焰新星', weight: 30, damage: 10, target: 'player', aoe: true, cooldown: 3 },
-      { name: '燃烧之触', weight: 20, damage: 8, status: { type: 'burn', stacks: 5 }, target: 'player', cooldown: 2 }
+      { name: '地狱火', weight: 50, damage: 12, status: { type: 'burn', stacks: 3 }, target: 'player' },
+      { name: '火焰新星', weight: 30, damage: 9, target: 'player', aoe: true, cooldown: 3 },
+      { name: '燃烧之触', weight: 20, damage: 7, status: { type: 'burn', stacks: 5 }, target: 'player', cooldown: 2 }
     ] },
-  { id: 'e_elite_armor_king', glyph: '钢', color: '#b0a89c', name: '钢甲战王', type: 'elite', maxHp: 90, defense: 12, speed: 3,
+  { id: 'e_elite_armor_king', glyph: '钢', color: '#b0a89c', name: '钢甲战王', type: 'elite', maxHp: 90, defense: 10, speed: 3,
     tags: ['防御'],
     skills: [
-      { name: '毁灭重锤', weight: 45, damage: 18, target: 'player', cooldown: 1 },
+      { name: '毁灭重锤', weight: 45, damage: 11, target: 'player', cooldown: 1 },
       { name: '铁壁防御', weight: 30, buff: { def: 10, rounds: 2 }, target: 'self', cooldown: 3 },
       { name: '战吼', weight: 25, buff: { atk: 0.3, rounds: 3 }, target: 'self', cooldown: 3 }
     ] },
 
   // Boss
-  { id: 'e_boss_dragon', glyph: '龙', color: '#c9a24b', name: '万律龙尊', type: 'boss', maxHp: 180, defense: 6, speed: 4,
+  { id: 'e_boss_dragon', glyph: '龙', color: '#c9a24b', name: '万律龙尊', type: 'boss', maxHp: 100, defense: 5, speed: 4,
     tags: ['Boss'],
     skills: [
-      { name: '龙息', weight: 40, damage: 18, status: { type: 'burn', stacks: 4 }, target: 'player', aoe: true },
-      { name: '龙爪', weight: 30, damage: 22, target: 'player', cooldown: 1 },
-      { name: '龙鳞护体', weight: 15, buff: { def: 8, rounds: 2 }, heal: 15, target: 'self', cooldown: 3 },
-      { name: '龙威', weight: 15, damage: 12, debuff: { atk: -0.2, rounds: 2 }, target: 'player', aoe: true, cooldown: 3 }
+      { name: '龙息', weight: 40, damage: 5, status: { type: 'burn', stacks: 3 }, target: 'player', aoe: true },
+      { name: '龙爪', weight: 30, damage: 7, target: 'player', cooldown: 1 },
+      { name: '龙鳞护体', weight: 15, buff: { def: 6, rounds: 2 }, heal: 10, target: 'self', cooldown: 3 },
+      { name: '龙威', weight: 15, damage: 4, debuff: { atk: -0.2, rounds: 2 }, target: 'player', aoe: true, cooldown: 3 }
     ],
     phases: [
-      { hpThreshold: 0.5, skillUnlock: { name: '灭世龙啸', weight: 50, damage: 26, status: { type: 'burn', stacks: 5 }, target: 'player', aoe: true, cooldown: 3 } }
+      { hpThreshold: 0.5, skillUnlock: { name: '灭世龙啸', weight: 50, damage: 8, status: { type: 'burn', stacks: 4 }, target: 'player', aoe: true, cooldown: 3 } }
     ] }
 ];
 

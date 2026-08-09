@@ -4,6 +4,9 @@
 // cooldowns, streak protection, status effects
 // ============================================================
 
+// 防御减伤常数：减伤率 = 防御 / (防御 + ARMOR_CONST)，平滑且高防收益递减
+const ARMOR_CONST = 20;
+
 class BattleCore {
   constructor(setup, rng) {
     this.setup = setup; // { character, skills, equipment, signatureSword, enemies }
@@ -109,6 +112,7 @@ class BattleCore {
       name: charDef.name,
       maxHp: charDef.maxHp,
       hp: charDef.maxHp,
+      atk: charDef.atk || 15,
       defense: 0,
       speed: 5,
       alive: true,
@@ -359,7 +363,7 @@ class BattleCore {
   }
 
   _basicAttack() {
-    const dmg = Math.max(1, this.player.maxHp * 0.08);
+    const dmg = Math.max(1, Math.round(this.player.atk * 0.5));
     const target = this._pickTarget('random');
     if (target) {
       this._present = { skillId: null, name: '普攻', category: 'basic', tag: '普攻', preset: 'light', isHeavy: false, isBloom: false, impactSfx: 'hit' };
@@ -370,7 +374,7 @@ class BattleCore {
   // ============ SKILL EXECUTION ============
 
   _executePlayerSkill(skill, options = {}) {
-    const { bonusMultiplier = 1, isHeavy = false } = options;
+    let { bonusMultiplier = 1, isHeavy = false } = options;
 
     // Check for 剑意/盛放 mechanics
     let isBloom = false;
@@ -513,7 +517,7 @@ class BattleCore {
       if (target && this._getStatusStacks(target.id, 'armorBreak') > 0) {
         this._log(`碎甲加成！`);
         // Re-deal with higher damage
-        const extraDmg = (skill.armorBrokenBonus.damage - skill.effects[0].base) * this.player.maxHp * 0.15;
+        const extraDmg = (skill.armorBrokenBonus.damage - 1) * skill.effects[0].base;
         this._dealDamage(this.player.id, target.id, Math.floor(extraDmg), ['bonus']);
       }
     }
@@ -530,7 +534,7 @@ class BattleCore {
           if (lastSkill && lastSkill.category === 'sword_qi') conditionMet = true;
         }
         if (conditionMet) {
-          const bonusDmg = skill.effects[0].base * skill.conditionBonus.damage * this.player.maxHp * 0.15 * bonusMultiplier;
+          const bonusDmg = skill.effects[0].base * skill.conditionBonus.damage * bonusMultiplier;
           this._dealDamage(this.player.id, target.id, Math.floor(bonusDmg), ['condition']);
         }
       }
@@ -540,7 +544,7 @@ class BattleCore {
     if (skill.chainBonus && this.streakState.lastSkillId && this.streakState.lastSkillId !== skill.id) {
       const target = this._pickTarget(skill.target);
       if (target) {
-        const chainDmg = skill.effects[0].base * skill.chainBonus.damage * this.player.maxHp * 0.15 * bonusMultiplier;
+        const chainDmg = skill.effects[0].base * skill.chainBonus.damage * bonusMultiplier;
         this._dealDamage(this.player.id, target.id, Math.floor(chainDmg), ['chain']);
         this._log('🔄 回风追击！');
       }
@@ -550,7 +554,7 @@ class BattleCore {
     if (skill.revengeBonus && this.tookDamageLastRound) {
       const target = this._pickTarget(skill.target);
       if (target) {
-        const revengeDmg = skill.effects[0].base * skill.revengeBonus.damage * this.player.maxHp * 0.15 * bonusMultiplier;
+        const revengeDmg = skill.effects[0].base * skill.revengeBonus.damage * bonusMultiplier;
         this._dealDamage(this.player.id, target.id, Math.floor(revengeDmg), ['revenge']);
         this._log('↩️ 折光反击！');
       }
@@ -560,7 +564,7 @@ class BattleCore {
     if (skill.executeBonus) {
       const target = this._pickTarget(skill.target);
       if (target && target.hp / target.maxHp < skill.executeBonus.threshold) {
-        const chaseDmg = skill.effects[0].base * skill.executeBonus.chaseDamage * this.player.maxHp * 0.15 * bonusMultiplier;
+        const chaseDmg = skill.effects[0].base * skill.executeBonus.chaseDamage * bonusMultiplier;
         this._dealDamage(this.player.id, target.id, Math.floor(chaseDmg), ['chase']);
         this._log('🏃 穿林追击！');
       }
@@ -572,7 +576,7 @@ class BattleCore {
       this._log('🔔 剑鸣释放！额外追击');
       const target = this._pickTarget('random');
       if (target) {
-        const chaseDmg = this.player.maxHp * 0.06 * bonusMultiplier;
+        const chaseDmg = this.player.atk * 0.4 * bonusMultiplier;
         this._dealDamage(this.player.id, target.id, Math.floor(chaseDmg), ['swordSong']);
       }
     }
@@ -605,12 +609,11 @@ class BattleCore {
   }
 
   _resolveDamage(skill, effect, target, bonusMultiplier, isHeavy) {
-    const baseAtk = this.player.maxHp * 0.15;
-    let rawDmg = baseAtk * effect.base;
+    let rawDmg = effect.base; // 具体伤害数值（来自 data.js）
 
     // Skill specific boost
     if (skill.intentBoost && this.swordIntent >= skill.intentBoost.threshold) {
-      rawDmg = baseAtk * skill.intentBoost.damage;
+      rawDmg = skill.intentBoost.damage; // 具体伤害数值
     }
 
     // Proficiency bonus
@@ -696,9 +699,10 @@ class BattleCore {
       if (this._eq.heavyAdd > 0) rawDmg *= (1 + this._eq.heavyAdd);
     }
 
-    // Defense reduction (含无视防御：破障符/盘古斧意)
-    const def = Math.max(0, target.defense * (1 - this._eq.ignoreDef) - (this._getStatusStacks(target.id, 'armorBreak') * 3));
-    rawDmg = Math.max(1, rawDmg - def * 0.5);
+    // Defense reduction: 平滑百分比减伤（含无视防御：破障符/盘古斧意）
+    const effDef = Math.max(0, target.defense * (1 - this._eq.ignoreDef) - (this._getStatusStacks(target.id, 'armorBreak') * 3));
+    const mitigation = effDef / (effDef + ARMOR_CONST);
+    rawDmg = Math.max(1, rawDmg * (1 - mitigation));
 
     // Damage taken multiplier
     rawDmg *= (this.enemyBuffs[target.id]?.damageTakenMult || 1);
@@ -706,7 +710,9 @@ class BattleCore {
     // Random variance ±10%
     rawDmg *= (0.9 + this.rng.nextFloat() * 0.2);
 
-    const finalDmg = Math.max(1, Math.floor(rawDmg));
+    // 最低伤害下限：避免出现"只打1滴血"的离谱情况（尤其对高防御敌人）
+    const atkFloor = Math.max(2, Math.floor(this.player.atk * 0.15));
+    const finalDmg = Math.max(atkFloor, Math.floor(rawDmg));
 
     this._dealDamage(this.player.id, target.id, finalDmg, ['skill', skill.tag]);
 
@@ -777,7 +783,7 @@ class BattleCore {
 
     if (available.length === 0) {
       // Basic attack
-      this._applyDamageToPlayer(enemy.maxHp * 0.1, enemy.name, picked.name, null, enemy.id);
+      this._applyDamageToPlayer(enemy.maxHp * 0.1, enemy.name, '普攻', null, enemy.id);
       return;
     }
 
