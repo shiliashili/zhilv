@@ -516,32 +516,60 @@ const ENEMIES = [
     ] }
 ];
 
+// ---- 大章节体系 ----
+// 4 个章节，每章 12 层 + Boss，逐章递增敌人强度
+const REGIONS = [
+  { name: '风之章', bossName: '风啸龙尊', scale: 1.0 },
+  { name: '云之章', bossName: '云隐龙尊', scale: 1.25 },
+  { name: '雷之章', bossName: '雷殛龙尊', scale: 1.55 },
+  { name: '龙之章', bossName: '万律龙尊', scale: 1.90 }
+];
+
+function regionScale(region) {
+  return REGIONS[Math.min(region, REGIONS.length - 1)]?.scale || 1.0;
+}
+
 // ---- 敌人随层数强度倍率 ----
 function layerScale(layer) {
   if (layer <= 2) return 1.0;
   if (layer <= 5) return 1.15;
   if (layer <= 8) return 1.30;
   if (layer <= 10) return 1.50;
-  return 1.0; // boss: 使用固定值，不在这里倍率
+  return 1.0; // boss: 在这层layerScale 返回 1，区域缩放另外处理
 }
 
 // Generate default encountered enemies by layer
-function generateEncounter(layer, seedRng) {
+function generateEncounter(layer, seedRng, region = 0) {
   const rng = seedRng || new SeededRandom(Date.now());
+  const regionMult = regionScale(region);
   const isElite = rng.nextFloat() < 0.12 && layer >= 4;
   const isBoss = layer >= 11;
 
   if (isBoss) {
+    const bossTmpl = ENEMIES.find(e => e.type === 'boss');
+    const regionName = REGIONS[region]?.name || '未知';
+    const regionBossName = REGIONS[region]?.bossName || bossTmpl.name;
+    const bossMult = 1.0 + region * 0.12; // 章节 Boss 独立缩放（比小兵稍缓）
     return {
       type: 'boss',
-      enemies: [{ ...ENEMIES.find(e => e.type === 'boss') }]
+      enemies: [{
+        ...bossTmpl,
+        name: regionBossName,
+        maxHp: Math.floor(bossTmpl.maxHp * bossMult),
+        defense: Math.floor(bossTmpl.defense * bossMult),
+        skills: bossTmpl.skills.map(s => ({ ...s, damage: Math.floor((s.damage || 0) * bossMult) })),
+        phases: bossTmpl.phases?.map(p => ({
+          ...p,
+          skillUnlock: p.skillUnlock ? { ...p.skillUnlock, damage: Math.floor((p.skillUnlock.damage || 0) * bossMult) } : undefined
+        }))
+      }]
     };
   }
 
   if (isElite) {
     const elites = ENEMIES.filter(e => e.type === 'elite');
     const pick = rng.pick(elites);
-    const scale = layerScale(layer);
+    const scale = layerScale(layer) * regionMult;
     return {
       type: 'elite',
       enemies: [{
@@ -557,7 +585,7 @@ function generateEncounter(layer, seedRng) {
   const count = rng.nextInt(1, 3);
   const selected = [];
   const pool = [...normals];
-  const scale = layerScale(layer);
+  const scale = layerScale(layer) * regionMult;
   for (let i = 0; i < count; i++) {
     const idx = rng.nextInt(0, pool.length - 1);
     const p = pool[idx];

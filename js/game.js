@@ -193,6 +193,7 @@ class GameController {
     this.powerBuff = 0; // 献祭累计的永久增伤
     this.proficiency = {};
     this.skills.forEach(s => { this.proficiency[s.id] = { xp: 0, level: 1 }; });
+    this.currentRegion = 0;
     this.seed = Date.now();
     this.rng = new SeededRandom(this.seed);
 
@@ -280,7 +281,7 @@ class GameController {
             <button class="btn btn-secondary btn-sm" onclick="game.showStatsPanel()" style="padding:4px 10px;font-size:13px;">属性</button>
           </div>
         </div>
-        <div class="route-map-title">行 路 图 · 第 ${this.currentLayer + 1} 层</div>
+        <div class="route-map-title">第${REGIONS[this.currentRegion].name} · 第 ${this.currentLayer + 1} 层</div>
         <div class="scroll-strip" style="background-image:url('assets/bg_map_fuchun.jpg')"></div>
         <div class="route-map-container" id="routeMapContainer">
           <div class="route-map" id="routeMap">`;
@@ -436,8 +437,8 @@ class GameController {
   // ============ BATTLE ============
 
   startBattle(type) {
-    const encounterRng = new SeededRandom(this.seed + this.currentLayer * 1000);
-    const encounter = generateEncounter(this.currentLayer, encounterRng);
+    const encounterRng = new SeededRandom(this.seed + this.currentLayer * 1000 + this.currentRegion * 10000);
+    const encounter = generateEncounter(this.currentLayer, encounterRng, this.currentRegion);
 
     // Override type if needed
     if (type === 'boss') {
@@ -1337,8 +1338,18 @@ class GameController {
     } else {
       this.currentLayer++;
       if (this.currentLayer >= this.routeMap.layers) {
-        this.regionCleared = true;
-        this.showVictoryScreen();
+        // 本节 Boss 已击败：章节升级
+        if (this.currentRegion < REGIONS.length - 1) {
+          this.currentRegion++;
+          this.currentLayer = 0;
+          this.regionCleared = false;
+          this.routeMap = generateRouteMap(this.seed + this.currentRegion * 7777);
+          this.showChapterClear();
+        } else {
+          // 第四章通关：最终胜利
+          this.regionCleared = true;
+          this.showVictoryScreen();
+        }
       } else {
         this.showRouteMap();
       }
@@ -1840,6 +1851,41 @@ class GameController {
     `;
   }
 
+  // ---- 章节通关 ----
+
+  showChapterClear() {
+    this.state = 'chapter_clear';
+    audio.playBgm('victory');
+    const prevRegion = REGIONS[this.currentRegion - 1];
+    const nextRegion = REGIONS[this.currentRegion];
+    document.getElementById('app').innerHTML = `
+      <div class="screen victory-screen">
+        <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.2"></div>
+        <div class="panel victory-final-panel">
+          <h2>${prevRegion.name} 踏破</h2>
+          <div class="victory-title">${prevRegion.bossName} 已被击败</div>
+          <div class="result-summary">
+            <div class="result-item">进入 ${nextRegion.name}</div>
+            <div class="result-item">敌人强度 ×${nextRegion.scale.toFixed(2)}</div>
+            <div class="result-item">剩余生命：${this.hp}/${this.maxHp}</div>
+            <div class="result-item">物资：${this.supply}</div>
+          </div>
+          <button class="btn btn-primary btn-block" onclick="game.nextChapter()">
+            进入 ${nextRegion.name}
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  nextChapter() {
+    audio.playUiClick();
+    audio.stopBgm();
+    this.showRouteMap();
+  }
+
+  // ---- 最终通关 ----
+
   showVictoryScreen() {
     this.state = 'game_over';
     audio.playBgm('victory');
@@ -1847,13 +1893,16 @@ class GameController {
 
     const researchPoints = 35 + 18 * 2 + Math.floor(Object.values(this.proficiency).reduce((s, p) => s + p.xp, 0) / 4);
 
+    const isFinalVictory = this.currentRegion >= REGIONS.length - 1;
+
     document.getElementById('app').innerHTML = `
       <div class="screen victory-screen">
         <div class="ink-bg" style="background-image:url('assets/bg_menu_fan_kuan.jpg');opacity:0.3"></div>
         <div class="panel victory-final-panel">
-          <h2>登 峰</h2>
-          <div class="victory-title">—— 《织律》掌握者 ——</div>
+          <h2>${isFinalVictory ? '登 峰' : '落 幕'}</h2>
+          <div class="victory-title">${isFinalVictory ? '—— 《织律》掌握者 ——' : '—— 征程暂歇 ——'}</div>
           <div class="result-summary">
+            <div class="result-item">抵达：第 ${this.currentRegion + 1} 章 · 第 ${this.currentLayer + 1} 层</div>
             <div class="result-item">剩余生命：${this.hp}/${this.maxHp}</div>
             <div class="result-item">物资：${this.supply}</div>
             <div class="result-item">研究点：+${researchPoints}</div>
