@@ -179,20 +179,55 @@ const EQUIPMENT = [
 ];
 
 // ---- 名剑 (Signature Swords for 剑圣) ----
-// 每把名剑都对剑意层数机制做了适配：emitEffect 内字段被 battle-core.js 解读为 stack 版本。
+// 每把名剑附一个大招（需 3 层剑意，释放后层数-1），不在技能池中，满层时由 UI 按钮触发。
 const SIGNATURE_SWORDS = [
   { id: 'sword_liuguang', name: '流光',
-    desc: '本次释放技能与上次不同，技能效果+12%；连续3次不同技能额外获得1剑意层',
-    effect: { diffSkillBonus: 0.12, chain3Bonus: { swordIntent: 1 } } },
+    desc: '技能与上次不同效果+12%；连续3次不同+1剑意。大招：七剑归一，全体 15 伤害 ×5 段',
+    effect: { diffSkillBonus: 0.12, chain3Bonus: { swordIntent: 1 } },
+    ultimate: {
+      id: 'ult_liuguang', name: '七剑归一', tag: '剑技·流光',
+      desc: '【需3层剑意】全体 15 伤害 ×5 段',
+      effects: [{ type: 'damage', base: 15, hits: 5, allEnemies: true }],
+      hitPreset: 'heavy', castSfx: 'sword_qi_bloom', impactSfx: 'sword_qi_bloom',
+      tier: 'custom', multiHit: true
+    }
+  },
   { id: 'sword_jinghong', name: '惊鸿',
-    desc: '大招释放所需剑意层-1（2层即可释放）；大招伤害额外+20%',
-    effect: { ultimateCostReduce: 1, ultimateBonus: 0.20 } },
+    desc: '大招要求层数-1（2层即可）；大招伤害额外+20%。大招：惊鸿一瞥，单体 75 伤害',
+    effect: { ultimateCostReduce: 1, ultimateBonus: 0.20 },
+    ultimate: {
+      id: 'ult_jinghong', name: '惊鸿一瞥', tag: '剑气·惊鸿',
+      desc: '【需2层剑意（惊鸿）】单体 75 伤害',
+      effects: [{ type: 'damage', base: 75, hits: 1 }],
+      hitPreset: 'execute', castSfx: 'sword_qi_bloom', impactSfx: 'execute',
+      tier: 'custom'
+    }
+  },
   { id: 'sword_duanyue', name: '断岳',
-    desc: '每累计7次有效命中，下次单体技能变为必暴+处决(普通敌人<18%生命)',
-    effect: { hitCount7: { critGuaranteed: true, executeThreshold: 0.18 } } },
+    desc: '每7次命中单体必暴+处决。大招：断岳一击，单体 55 伤害，对 <25% 生命敌人直接处决',
+    effect: { hitCount7: { critGuaranteed: true, executeThreshold: 0.18 } },
+    ultimate: {
+      id: 'ult_duanyue', name: '断岳一击', tag: '剑技·断岳',
+      desc: '【需3层剑意】单体 55 伤害，对 <25% 敌人处决',
+      effects: [{ type: 'damage', base: 55, hits: 1, execute: 0.25 }],
+      hitPreset: 'execute', castSfx: 'sword_qi_bloom', impactSfx: 'execute',
+      tier: 'custom'
+    }
+  },
   { id: 'sword_taichu', name: '太初',
-    desc: '每场战斗开场自动获得1层剑意；生命<40%时剑技权重×1.25、命中时剑意+1',
-    effect: { firstCombatStackFree: true, lowHpSwordBonus: { weightMult: 1.25, intentBonus: 1 }, lowHpThreshold: 0.40 } }
+    desc: '开局自送1层剑意；低血量剑技额外+1点。大招：太虚归一，全队回 25% 生命 + 10% 护盾',
+    effect: { firstCombatStackFree: true, lowHpSwordBonus: { weightMult: 1.25, intentBonus: 1 }, lowHpThreshold: 0.40 },
+    ultimate: {
+      id: 'ult_taichu', name: '太虚归一', tag: '内功·太初',
+      desc: '【需3层剑意】回复最大生命 25%，获得 10% 护盾',
+      effects: [
+        { type: 'heal', amount: 0.25 },
+        { type: 'shield', amount: 0.10 }
+      ],
+      hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none',
+      tier: 'custom'
+    }
+  }
 ];
 
 // ---- Character Skills ----
@@ -292,31 +327,7 @@ const SWORDSMAN_SKILLS = [
     castSfx: 'sword_qi_bloom', impactSfx: 'execute',
     tier: 'custom' },
 
-  // ===================== 新增：3 个大招（需 3 层剑意，释放后层数 -1） =====================
-  { id: 's_spirit_roundslash', name: '气刃大回转', category: 'sword_ultimate', tag: '大招',
-    baseWeight: 110, cooldown: 2, target: 'highest_hp',
-    desc: '【需3层剑意】释放后层数-1；造成 65 伤害，并使目标破甲3层',
-    effects: [{ type: 'damage', base: 65, hits: 1 }],
-    applyStatus: { status: 'armorBreak', stacks: 3 },
-    requireSwordIntent: 3, consumeSwordIntent: 1,
-    hitPreset: 'execute', sweetener: 'heavy',
-    castSfx: 'sword_qi_bloom', impactSfx: 'execute', tier: 'custom' },
-
-  { id: 's_iaigiri', name: '一闪·居合', category: 'sword_ultimate', tag: '大招',
-    baseWeight: 110, cooldown: 2, target: 'highest_hp',
-    desc: '【需3层剑意】释放后层数-1；造成 50 伤害；目标<30%生命直接处决',
-    effects: [{ type: 'damage', base: 50, hits: 1, execute: 0.30 }],
-    requireSwordIntent: 3, consumeSwordIntent: 1,
-    hitPreset: 'execute', sweetener: 'execute',
-    castSfx: 'sword_qi_bloom', impactSfx: 'execute', tier: 'custom' },
-
-  { id: 's_eightway_slash', name: '剑廿三十·八方斩', category: 'sword_ultimate', tag: '大招',
-    baseWeight: 80, cooldown: 3, target: 'all_enemies',
-    desc: '【需3层剑意】释放后层数-1；全体 18 伤害 ×4 段',
-    effects: [{ type: 'damage', base: 18, hits: 4, allEnemies: true }],
-    requireSwordIntent: 3, consumeSwordIntent: 1,
-    hitPreset: 'heavy', sweetener: 'heavy',
-    castSfx: 'sword_qi_bloom', impactSfx: 'sword_qi_bloom', tier: 'custom', multiHit: true }
+  // ========== 大招现在绑定在名剑上（见 SIGNATURE_SWORDS），不再作为普通技能 ==========
 ];
 
 // 武圣 (Martial Artist) skills —— 伤害为具体数值（每 hit）

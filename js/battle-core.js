@@ -187,7 +187,188 @@ class BattleCore {
     };
   }
 
-  // ============ ROUND EXECUTION ============
+  // ============ MANUAL BATTLE API ============
+
+  /** 手动模式：仅初始化，不自动执行 */
+  startManual() {
+    this.round = 0;
+    this._nextAction = null;
+  }
+
+  /** 回合开始（冷却、状态、buff） */
+  beginRound() {
+    this.round++;
+    this.phase = 'round_start';
+    this._log(`--- 第 ${this.round} 回合开始 ---`);
+    this._cooldownTick();
+    this._statusTick('round_start');
+    this._processBuffs();
+  }
+
+  /** 玩家选择技能后执行 */
+  playSkill(skill) {
+    if (this.isDefeat || this.isPlayerVictory) return this.isBattleOver();
+    this.phase = 'selecting_player_skill';
+    this._log(`🎯 选择技能: ${skill.name}`);
+
+    // Update streak
+    if (this.streakState.lastSkillId === skill.id) {
+      this.streakState.consecutiveCount++;
+    } else {
+      this.streakState.lastSkillId = skill.id;
+      this.streakState.consecutiveCount = 1;
+    }
+
+    this._addEvent('skill_cast', { skill, weight: skill.baseWeight, streak: this.streakState.consecutiveCount });
+
+    // Check if signature sword buff applies
+    if (this.setup.signatureSword) {
+      this._applySignatureSword(this.setup.signatureSword, skill);
+    }
+
+    this._executePlayerSkill(skill);
+    // 链式内功：自动追打拳/脚
+    if (skill.chainAction) {
+      this._chainAction = skill;
+      this._executeChainAction();
+      this._chainAction = null;
+    }
+    // 检查是否触发胜利/失败
+    this._checkEndConditions();
+    return this.isBattleOver();
+  }
+
+  /** 执行本轮所有敌人行动 */
+  playEnemies() {
+    if (this.isDefeat || this.isPlayerVictory) return this.isBattleOver();
+    this.phase = 'resolving_enemies';
+    const aliveEnemies = this.enemies.filter(e => e.alive);
+    aliveEnemies.sort((a, b) => b.speed - a.speed);
+    for (const enemy of aliveEnemies) {
+      if (this.isDefeat || this.isPlayerVictory) break;
+      this._enemyAction(enemy);
+    }
+    this._checkEndConditions();
+    return this.isBattleOver();
+  }
+
+  /** 回合结束处理 */
+  endRound() {
+    if (this.isDefeat || this.isPlayerVictory) return this.isBattleOver();
+    this.phase = 'round_end';
+    this._statusTick('round_end');
+    this._processBuffs();
+    this._log(`--- 第 ${this.round} 回合结束 ---`);
+    this._checkEndConditions();
+    return this.isBattleOver();
+  }
+
+  _checkEndConditions() {
+    if (this.player.hp <= 0) {
+      this.player.hp = 0;
+      this.player.alive = false;
+      this.isDefeat = true;
+      this.phase = 'defeat';
+      this._addEvent('defeat', {});
+    }
+    if (this.enemies.every(e => !e.alive)) {
+      this.isPlayerVictory = true;
+      this.phase = 'victory';
+      this._addEvent('victory', {});
+    }
+  }
+
+  /** 获取可用技能（不在冷却中） */
+  getAvailableSkills() {
+    return this.player.skillSlots.filter(s => {
+      const cd = this._getCooldown(s.id);
+      if (cd > 0) return false;
+      // 大招层数门禁
+      if (s.requireSwordIntent) {
+        let required = s.requireSwordIntent;
+        const sigSwordEf = this.setup.signatureSword?.effect;
+        if (sigSwordEf?.ultimateCostReduce) required = Math.max(1, required - sigSwordEf.ultimateCostReduce);
+        if (this.swordIntentLevel < required) return false;
+      }
+      return true;
+    });
+  }
+
+  /** 从可用技能中随机抽取 count 张卡 */
+  drawHand(count = 4) {
+    const available = this.getAvailableSkills();
+    const shuffled = this.skillRng.shuffle([...available]);
+    return shuffled.slice(0, Math.min(count, shuffled.length));
+  }
+
+  /** 是否可以释放大招（剑圣专用） */
+  canUltimate() {
+    if (!this.setup.signatureSword?.ultimate) return false;
+    let required = 3;
+    const sigSwordEf = this.setup.signatureSword.effect;
+    if (sigSwordEf?.ultimateCostReduce) required = Math.max(1, required - sigSwordEf.ultimateCostReduce);
+    return this.swordIntentLevel >= required;
+  }
+
+  /** 释放名剑大招（层数 -1） */
+  playUltimate() {
+    if (!this.canUltimate()) return { ok: false };
+    const sword = this.setup.signatureSword;
+    const ultimate = sword.ultimate;
+    const before = this.swordIntentLevel;
+    this.swordIntentLevel = Math.max(0, this.swordIntentLevel - 1);
+    this._log(`⚔️ ${ultimate.name}！剑意层数 ${before} → ${this.swordIntentLevel}`);
+    this._executePlayerSkill(ultimate);
+    this._checkEndConditions();
+    return this.isBattleOver();
+  }
+
+  /** 返回对外状态（供 UI 渲染） */
+  getBattleState() {
+    return {
+      round: this.round,
+      player: {
+        hp: this.player.hp,
+        maxHp: this.player.maxHp,
+        atk: this.player.atk,
+        hasShield: this.hasShield,
+        alive: this.player.alive
+      },
+      enemies: this.enemies.map(e => ({
+        id: e.id,
+        name: e.name,
+        hp: e.hp,
+        maxHp: e.maxHp,
+        defense: e.defense,
+        alive: e.alive,
+        type: e.definition?.type || 'normal',
+        color: e.definition?.color || '#b8a684'
+      })),
+      swordIntent: this.swordIntent,
+      swordIntentLevel: this.swordIntentLevel,
+      momentum: this.momentum,
+      log: [...this.battleLog],
+      phase: this.phase
+    };
+  }
+
+  /** 战斗是否结束 */
+  isBattleOver() {
+    return {
+      isOver: this.isDefeat || this.isPlayerVictory,
+      victory: this.isPlayerVictory,
+      defeat: this.isDefeat,
+      player: this.player,
+      enemies: this.enemies,
+      proficiency: this.proficiency,
+      pendingUpgrades: [...this.pendingUpgrades],
+      log: this.battleLog,
+      rounds: this.round,
+      events: this.events
+    };
+  }
+
+  // ============ ROUND EXECUTION (AUTO) ============
 
   _executeRound() {
     this.round++;
@@ -485,6 +666,10 @@ class BattleCore {
       } else if (effect.type === 'shield') {
         this.hasShield += Math.floor(this.player.maxHp * effect.amount);
         this._log(`🛡️ 获得护盾 +${Math.floor(this.player.maxHp * effect.amount)}`);
+      } else if (effect.type === 'heal') {
+        const healAmt = Math.floor(this.player.maxHp * effect.amount);
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + healAmt);
+        this._log(`💚 回复生命 +${healAmt}`);
       } else if (effect.type === 'set_momentum') {
         this.momentum = Math.min(this._momentumMax(), effect.amount);
         this._log(`💪 蓄势达到${this.momentum}！`);

@@ -827,6 +827,85 @@ body {
 .log-line { padding: 1px 0; }
 .log-line:first-child { color: var(--gold-bright); }
 
+/* ---- Manual Battle Card Area ---- */
+.battle-card-area {
+  padding: 8px 10px 10px;
+  background: rgba(12,10,8,0.55);
+  border-top: 1px solid rgba(201,162,75,0.25);
+  position: sticky;
+  bottom: 0;
+}
+.card-hand {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.card-ultimate-area {
+  display: flex;
+  justify-content: center;
+  margin-top: 6px;
+}
+.skill-card {
+  background: linear-gradient(135deg, rgba(26,22,17,0.92), rgba(20,17,13,0.92));
+  border: 1.5px solid rgba(201,162,75,0.3);
+  border-radius: 8px;
+  padding: 10px 14px;
+  width: 150px;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  position: relative;
+}
+.skill-card:hover {
+  border-color: var(--gold-bright);
+  transform: translateY(-3px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.6), 0 0 14px rgba(201,162,75,0.25);
+}
+.skill-card:active { transform: translateY(-1px); }
+.card-tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--paper-mute);
+  margin-bottom: 4px;
+}
+.card-name {
+  font-family: var(--font-brush);
+  font-size: 18px;
+  letter-spacing: 2px;
+  color: var(--paper);
+  font-weight: 400;
+}
+.card-desc {
+  font-size: 10px;
+  color: var(--paper-mute);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.skill-card.card-rare {
+  border-color: rgba(201,162,75,0.55);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 10px rgba(201,162,75,0.15);
+}
+.skill-card.card-qi {
+  border-color: rgba(106,146,173,0.45);
+}
+.skill-card.card-ultimate {
+  border-color: var(--gold-bright);
+  box-shadow: 0 0 18px rgba(201,162,75,0.45), 0 4px 14px rgba(0,0,0,0.6);
+  background: linear-gradient(135deg, rgba(30,22,10,0.94), rgba(20,14,8,0.94));
+  width: 220px;
+  animation: cardPulse 2s ease-in-out infinite;
+}
+.skill-card.card-ultimate:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 0 28px rgba(201,162,75,0.55), 0 8px 24px rgba(0,0,0,0.7);
+}
+@keyframes cardPulse {
+  0%,100% { box-shadow: 0 0 18px rgba(201,162,75,0.35), 0 4px 14px rgba(0,0,0,0.6); }
+  50% { box-shadow: 0 0 28px rgba(201,162,75,0.6), 0 4px 14px rgba(0,0,0,0.6); }
+}
+
 /* Enemy Area */
 .enemy-area {
   display: flex;
