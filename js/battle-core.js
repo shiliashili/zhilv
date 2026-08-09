@@ -26,8 +26,11 @@ class BattleCore {
     this.pendingUpgrades = [];
 
     // Player-specific resources
-    this.swordIntent = 0;   // 剑意层数（0-3，每层 +10% 伤害）；3 层可释放大招，释放后 -1
-    this.momentum = 0;      // 蓄势（武圣）
+    // 剑意二级制：swordIntent = 点数（0-3），swordIntentLevel = 层数（0-3）
+    // 每 3 点升 1 层，每层 +10% 伤害；3 层可放大招，释放后 level -1
+    this.swordIntent = 0;        // 当前剑意点数（3 点升 1 层）
+    this.swordIntentLevel = 0;   // 当前剑意层数（每层 +10% 伤害）
+    this.momentum = 0;           // 蓄势（武圣）
     this.firstSwordStackFree = false; // For 太初：开战自送 1 层
     this.totalHitsDealt = 0;
     this.tookDamageLastRound = false;
@@ -64,7 +67,7 @@ class BattleCore {
     // 太初：每场战斗开场自动获得 1 层剑意
     const sigSwordEf = this.setup.signatureSword?.effect;
     if (sigSwordEf?.firstCombatStackFree && this.setup.character.id === 'swordsman') {
-      this.swordIntent = 1;
+      this.swordIntentLevel = 1;
       this._log('🌟 太初：开战自送 1 层剑意');
     }
 
@@ -305,7 +308,7 @@ class BattleCore {
         let required = s.requireSwordIntent;
         const sigSwordEf = this.setup.signatureSword?.effect;
         if (sigSwordEf?.ultimateCostReduce) required = Math.max(1, required - sigSwordEf.ultimateCostReduce);
-        if (this.swordIntent < required) return null;
+        if (this.swordIntentLevel < required) return null;
       }
 
       return { skill: s, weight: Math.max(1, w) };
@@ -393,7 +396,7 @@ class BattleCore {
   _executePlayerSkill(skill, options = {}) {
     let { bonusMultiplier = 1, isHeavy = false } = options;
 
-    // 大招逻辑：要求剑意 >= requireSwordIntent，释放后层数 -consumeSwordIntent
+    // 大招逻辑：要求剑意层数 >= requireSwordIntent，释放后层数 -consumeSwordIntent
     let isUltimate = false;
     if (skill.requireSwordIntent) {
       let required = skill.requireSwordIntent;
@@ -401,15 +404,15 @@ class BattleCore {
       const sigSwordEf = this.setup.signatureSword?.effect;
       if (sigSwordEf?.ultimateCostReduce) required = Math.max(1, required - sigSwordEf.ultimateCostReduce);
       // 防御性守卫：层数不够时此技能不应被调用（pick 阶段已过滤）
-      if (this.swordIntent < required) {
-        this._log(`⚠️ 剑意不足（${this.swordIntent}/${required}），无法释放大招`);
+      if (this.swordIntentLevel < required) {
+        this._log(`⚠️ 剑意不足（${this.swordIntentLevel}/${required}），无法释放大招`);
         return;
       }
       const consume = skill.consumeSwordIntent || 1;
-      const before = this.swordIntent;
-      this.swordIntent = Math.max(0, this.swordIntent - consume);
+      const before = this.swordIntentLevel;
+      this.swordIntentLevel = Math.max(0, this.swordIntentLevel - consume);
       isUltimate = true;
-      this._log(`⚔️ 大招释放！剑意层数 ${before} → ${this.swordIntent}`);
+      this._log(`⚔️ 大招释放！剑意层数 ${before} → ${this.swordIntentLevel}`);
     }
 
     // 演出元数据：供表现层按事件驱动斩击/剑气/震屏等效果，不影响结算
@@ -490,18 +493,24 @@ class BattleCore {
     // Apply on-hit effects
     if (skill.onHit) {
       if (skill.onHit.swordIntent) {
-        const before = this.swordIntent;
-        this.swordIntent = Math.min(3, this.swordIntent + skill.onHit.swordIntent);
-        if (this.swordIntent > before) {
-          this._log(`✦ 剑意 +${this.swordIntent - before}，当前层数: ${this.swordIntent}/3`);
-        }
-        // 太初：低血量时，剑技命中额外 +1 层
+        // 二级制：点数 +1，满 3 升 1 层
+        this.swordIntent += skill.onHit.swordIntent;
         const sigSwordEf = this.setup.signatureSword?.effect;
+        // 太初：低血量时，剑技命中额外 +1 点
         if (sigSwordEf?.lowHpSwordBonus &&
-            this.player.hp / this.player.maxHp < sigSwordEf.lowHpSwordBonus.lowHpThreshold &&
-            this.swordIntent < 3) {
-          this.swordIntent = Math.min(3, this.swordIntent + sigSwordEf.lowHpSwordBonus.intentBonus);
-          this._log(`🌟 太初：低血量剑技加成，剑意层数: ${this.swordIntent}/3`);
+            this.player.hp / this.player.maxHp < sigSwordEf.lowHpSwordBonus.lowHpThreshold) {
+          this.swordIntent += sigSwordEf.lowHpSwordBonus.intentBonus;
+        }
+        // 每 3 点升 1 层（最多 3 层）
+        while (this.swordIntent >= 3 && this.swordIntentLevel < 3) {
+          this.swordIntentLevel++;
+          this.swordIntent -= 3;
+          this._log(`⬆ 剑意突破！层数升为 ${this.swordIntentLevel} / 3（+${this.swordIntentLevel * 10}% 伤害）`);
+        }
+        // 层数已满 3 时点数不再累积
+        if (this.swordIntentLevel >= 3) this.swordIntent = 0;
+        if (this.swordIntent > 0) {
+          this._log(`✦ 剑意 +1，点数: ${this.swordIntent}/3，层数: ${this.swordIntentLevel}/3`);
         }
       }
     }
@@ -610,9 +619,9 @@ class BattleCore {
       rawDmg *= profMult;
     }
 
-    // 剑意层数加成：每层 +10% 伤害（仅剑技/剑气，不含大招；大招已自含强力设定）
+    // 剑意层数加成：剑技/剑气吃每层 +10%，大招不吃（已含强力设定）
     if (skill.category === 'sword_technique' || skill.category === 'sword_qi') {
-      rawDmg *= (1 + this.swordIntent * 0.10);
+      rawDmg *= (1 + this.swordIntentLevel * 0.10);
     }
     // 惊鸿：大招伤害额外 +20%
     if (skill.category === 'sword_ultimate' && this.setup.signatureSword?.effect?.ultimateBonus) {
@@ -1079,9 +1088,13 @@ class BattleCore {
         this._swordChain.push(skill.id);
         if (this._swordChain.length > 3) this._swordChain.shift();
         if (this._swordChain.length === 3 && new Set(this._swordChain).size === 3) {
-          if (this.swordIntent < 3) {
-            this.swordIntent += 1;
-            this._log('✨ 流光：连续3次不同技能，剑意层数 +1！');
+          this.swordIntent += 1;
+          this._log('✨ 流光：连续3次不同技能，剑意 +1 点！');
+          // 点满 3 即自动升层
+          if (this.swordIntent >= 3 && this.swordIntentLevel < 3) {
+            this.swordIntentLevel++;
+            this.swordIntent -= 3;
+            this._log(`⬆ 剑意突破！层数升为 ${this.swordIntentLevel} / 3`);
           }
           this._swordChain = [];
         }

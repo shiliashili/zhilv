@@ -771,6 +771,46 @@ body {
 .intent-orb.filled { background: radial-gradient(circle at 35% 30%, var(--gold-bright), var(--gold)); box-shadow: 0 0 6px rgba(201,162,75,0.7); }
 .intent-orb.momentum.filled { background: radial-gradient(circle at 35% 30%, #f0b278, var(--ember)); box-shadow: 0 0 6px rgba(217,142,74,0.7); }
 
+/* 剑意层数显示（I / II / III + 增伤百分比） */
+.intent-level-display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: 0.75;
+}
+.level-step {
+  width: 22px; height: 22px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(236,224,198,0.2);
+  background: rgba(236,224,198,0.04);
+  color: var(--paper-mute);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  transition: all 0.35s ease;
+}
+.level-step.active {
+  border-color: var(--gold);
+  background: rgba(201,162,75,0.15);
+  color: var(--gold-bright);
+  box-shadow: 0 0 8px rgba(201,162,75,0.35);
+}
+.intent-bonus {
+  margin-left: 4px;
+  color: var(--gold-bright);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 1px;
+  transition: all 0.3s;
+}
+.intent-level { font-weight: 700; color: var(--gold-bright); }
+.res-sub { font-size: 10px; color: var(--paper-mute); margin-left: 2px; }
+
 /* Battle Log */
 .battle-log {
   background: rgba(12, 10, 8, 0.66);

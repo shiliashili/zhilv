@@ -26,9 +26,10 @@ class GameController {
     this.pendingUpgrades = [];
     this.regionCleared = false;
     // 演出状态
-    this._enemyStatuses = {};   // enemyId -> {status: stacks}
-    this._liveIntent = 0;       // 演出用剑意（近似）
-    this._liveMomentum = 0;     // 演出用蓄势（近似）
+    this._enemyStatuses = {};      // enemyId -> {status: stacks}
+    this._liveIntentPoints = 0;     // 演出用剑意点数（0-3）
+    this._liveIntentLevel = 0;      // 演出用剑意层数（0-3）
+    this._liveMomentum = 0;         // 演出用蓄势（近似）
   }
 
   // ============ INIT ============
@@ -456,7 +457,8 @@ class GameController {
     this.battleCore = new BattleCore(setup, new SeededRandom(this.seed));
     this.state = 'battle';
     this._enemyStatuses = {};
-    this._liveIntent = 0;
+    this._liveIntentPoints = 0;
+    this._liveIntentLevel = 0;
     this._liveMomentum = 0;
     // 演出用实时血量（随事件逐帧更新，避免开局即显示结算值）
     this._livePlayerHp = setup.character.maxHp;
@@ -535,13 +537,26 @@ class GameController {
             </div>
             <div class="resource-indicator">
               <span>${char.resource.name}
-                <span class="res-val" id="${char.resource.key}">0</span>/${resMax}
+                ${char.id === 'swordsman' ?
+                `<span class="res-val intent-level" id="${char.resource.key}">lv.0</span><span class="res-val res-sub" id="${char.resource.key}Points">0/3</span>` :
+                `<span class="res-val" id="${char.resource.key}">0</span>/${resMax}`
+                }
               </span>
               ${sigSword ? `<span style="color:var(--gold)">名剑 · ${sigSword.name}</span>` : ''}
             </div>
             <div class="intent-orbs" id="intentOrbs">
-              ${Array.from({length: resMax}, () => `<span class="intent-orb ${char.id === 'martialArtist' ? 'momentum' : ''}"></span>`).join('')}
+              ${Array.from({length: resMax}, () =>
+                `<span class="intent-orb ${char.id === 'martialArtist' ? 'momentum' : ''}"></span>`
+              ).join('')}
             </div>
+            ${char.id === 'swordsman' ?
+              `<div class="intent-level-display" id="intentLevelDisplay">
+                <span class="level-step" id="lvlStep1">I</span>
+                <span class="level-step" id="lvlStep2">II</span>
+                <span class="level-step" id="lvlStep3">III</span>
+                <span class="intent-bonus">+0%</span>
+              </div>` : ''
+            }
           </div>
 
           <!-- FX layer -->
@@ -659,14 +674,20 @@ class GameController {
     if (chip) chip.classList.add('active-cast');
 
     // 演出用资源近似推进
-    // 剑技：命中后剑意层数 +1（cap 3）
+    // 剑技：命中后剑意点数 +1（满 3 自动升 1 层、清空点数）
     if (skill.category === 'sword_technique') {
-      if (skill.onHit?.swordIntent) this._liveIntent = Math.min(3, this._liveIntent + 1);
+      if (skill.onHit?.swordIntent) {
+        this._liveIntentPoints = Math.min(3, this._liveIntentPoints + 1);
+        if (this._liveIntentPoints >= 3 && this._liveIntentLevel < 3) {
+          this._liveIntentLevel++;
+          this._liveIntentPoints = 0;
+        }
+      }
     }
     // 剑气：不增减（已不再消耗剑意）
-    // 大招：释放后层数 -1（仅在大于 0 时减少，避免跌破 0）
+    // 大招：释放后层数 -1
     if (skill.category === 'sword_ultimate') {
-      this._liveIntent = Math.max(0, this._liveIntent - 1);
+      this._liveIntentLevel = Math.max(0, this._liveIntentLevel - 1);
     }
     if (skill.category === 'fist' || skill.category === 'kick' || skill.category === 'inner_power') {
       this._liveMomentum = Math.min(3, this._liveMomentum + 1);
@@ -982,16 +1003,38 @@ class GameController {
     setTimeout(() => f.remove(), 200);
   }
 
-  /** 剑意/蓄势珠 */
+  /** 剑意/蓄势珠 + 层数显示 */
   _updateOrbs() {
     const orbs = document.getElementById('intentOrbs');
-    if (!orbs) return;
-    const val = this.character.id === 'swordsman' ? this._liveIntent : this._liveMomentum;
-    Array.from(orbs.children).forEach((orb, i) => {
-      orb.classList.toggle('filled', i < val);
-    });
-    const resEl = document.getElementById(this.character.resource.key);
-    if (resEl) resEl.textContent = val;
+    if (orbs && this.character.id === 'swordsman') {
+      // 剑意：3 珠表示点数（0-3）
+      Array.from(orbs.children).forEach((orb, i) => {
+        orb.classList.toggle('filled', i < this._liveIntentPoints);
+      });
+      // 层数显示 I/II/III
+      for (let l = 1; l <= 3; l++) {
+        const el = document.getElementById(`lvlStep${l}`);
+        if (el) el.classList.toggle('active', l <= this._liveIntentLevel);
+      }
+      // 增伤百分比
+      const bonusEl = document.querySelector('.intent-bonus');
+      if (bonusEl) bonusEl.textContent = `+${this._liveIntentLevel * 10}%`;
+      // 资源文本
+      const resEl = document.getElementById(this.character.resource.key);
+      if (resEl) {
+        const roman = ['0', 'I', 'II', 'III'][this._liveIntentLevel];
+        resEl.textContent = `lv.${this._liveIntentLevel}`;
+      }
+      const ptsEl = document.getElementById(this.character.resource.key + 'Points');
+      if (ptsEl) ptsEl.textContent = `${this._liveIntentPoints}/3`;
+    }
+    if (orbs && this.character.id === 'martialArtist') {
+      Array.from(orbs.children).forEach((orb, i) => {
+        orb.classList.toggle('filled', i < this._liveMomentum);
+      });
+      const resEl = document.getElementById(this.character.resource.key);
+      if (resEl) resEl.textContent = this._liveMomentum;
+    }
   }
 
   _updateHpBars() {

@@ -516,24 +516,40 @@ const ENEMIES = [
     ] }
 ];
 
+// ---- 敌人随层数强度倍率 ----
+function layerScale(layer) {
+  if (layer <= 2) return 1.0;
+  if (layer <= 5) return 1.15;
+  if (layer <= 8) return 1.30;
+  if (layer <= 10) return 1.50;
+  return 1.0; // boss: 使用固定值，不在这里倍率
+}
+
 // Generate default encountered enemies by layer
 function generateEncounter(layer, seedRng) {
   const rng = seedRng || new SeededRandom(Date.now());
-  const isElite = rng.nextFloat() < 0.12 && layer >= 3;
-  const isBoss = layer >= 8;
+  const isElite = rng.nextFloat() < 0.12 && layer >= 4;
+  const isBoss = layer >= 11;
 
   if (isBoss) {
     return {
       type: 'boss',
-      enemies: [ENEMIES.find(e => e.type === 'boss')]
+      enemies: [{ ...ENEMIES.find(e => e.type === 'boss') }]
     };
   }
 
   if (isElite) {
     const elites = ENEMIES.filter(e => e.type === 'elite');
+    const pick = rng.pick(elites);
+    const scale = layerScale(layer);
     return {
       type: 'elite',
-      enemies: [rng.pick(elites)]
+      enemies: [{
+        ...pick,
+        maxHp: Math.floor(pick.maxHp * scale),
+        defense: Math.floor(pick.defense * scale),
+        skills: pick.skills.map(s => ({ ...s, damage: Math.floor((s.damage || 0) * scale) }))
+      }]
     };
   }
 
@@ -541,9 +557,16 @@ function generateEncounter(layer, seedRng) {
   const count = rng.nextInt(1, 3);
   const selected = [];
   const pool = [...normals];
+  const scale = layerScale(layer);
   for (let i = 0; i < count; i++) {
     const idx = rng.nextInt(0, pool.length - 1);
-    selected.push(pool[idx]);
+    const p = pool[idx];
+    selected.push({
+      ...p,
+      maxHp: Math.floor(p.maxHp * scale),
+      defense: Math.floor(p.defense * scale),
+      skills: p.skills.map(s => ({ ...s, damage: Math.floor((s.damage || 0) * scale) }))
+    });
     pool.splice(idx, 1);
     if (pool.length === 0) break;
   }
@@ -554,9 +577,10 @@ function generateEncounter(layer, seedRng) {
 // ---- Route Generation ----
 function generateRouteMap(seed) {
   const rng = new SeededRandom(seed);
-  const layers = 9;
+  const layers = 12;  // 4 层更深的关卡（共 12 层，0-11）
   const nodes = [];
 
+  // 在 4 个区域各确保 1 个 shop / rest / upgrade（4×3=12 保证节点在每区）
   const nodeTypes = ['battle', 'battle', 'battle', 'battle', 'event', 'event', 'shop', 'upgrade', 'rest', 'treasure'];
 
   for (let layer = 0; layer < layers; layer++) {
@@ -591,19 +615,33 @@ function generateRouteMap(seed) {
     nodes.push(layerNodes);
   }
 
-  // Ensure guaranteed nodes exist
+  // Ensure guaranteed nodes exist in each quarter (4 regions × 3 garantueed types)
   const allNodes = nodes.flat();
+  // 保证每 3 层至少 1 个 shop / rest / upgrade（12 层 ÷ 4 区 = 每区 3 层）
+  for (let region = 0; region < 4; region++) {
+    const regionNodes = allNodes.filter(n => n.layer >= region * 3 && n.layer < (region + 1) * 3 && n.layer > 0);
+    if (!regionNodes.some(n => n.type === 'shop')) {
+      const candidates = regionNodes.filter(n => n.layer < layers - 1 && !n.visited);
+      if (candidates.length > 0) rng.pick(candidates).type = 'shop';
+    }
+    if (!regionNodes.some(n => n.type === 'rest')) {
+      const candidates = regionNodes.filter(n => n.type !== 'shop' && !n.visited && n.layer < layers - 1);
+      if (candidates.length > 0) rng.pick(candidates).type = 'rest';
+    }
+    if (!regionNodes.some(n => n.type === 'upgrade')) {
+      const candidates = regionNodes.filter(n => n.type !== 'shop' && n.type !== 'rest' && !n.visited && n.layer < layers - 1);
+      if (candidates.length > 0) rng.pick(candidates).type = 'upgrade';
+    }
+  }
+  // 全局补位：万一有类型全缺
   if (!allNodes.some(n => n.type === 'shop')) {
-    const candidates = allNodes.filter(n => n.layer > 1 && n.layer < layers - 2);
-    if (candidates.length > 0) rng.pick(candidates).type = 'shop';
+    rng.pick(allNodes.filter(n => n.layer > 0 && n.layer < layers - 1)).type = 'shop';
   }
   if (!allNodes.some(n => n.type === 'rest')) {
-    const candidates = allNodes.filter(n => n.layer > 1 && n.layer < layers - 2 && n.type !== 'shop');
-    if (candidates.length > 0) rng.pick(candidates).type = 'rest';
+    rng.pick(allNodes.filter(n => n.layer > 0 && n.layer < layers - 1 && n.type !== 'shop')).type = 'rest';
   }
   if (!allNodes.some(n => n.type === 'upgrade')) {
-    const candidates = allNodes.filter(n => n.layer > 1 && n.layer < layers - 2 && n.type !== 'shop' && n.type !== 'rest');
-    if (candidates.length > 0) rng.pick(candidates).type = 'upgrade';
+    rng.pick(allNodes.filter(n => n.layer > 0 && n.layer < layers - 1 && n.type !== 'shop' && n.type !== 'rest')).type = 'upgrade';
   }
 
   // Generate connections: each node connects to 1-3 nodes in next layer
