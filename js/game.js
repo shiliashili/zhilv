@@ -1340,10 +1340,25 @@ class GameController {
                 <button class="btn btn-secondary btn-sm" onclick="game.buyHeal(30)">疗愈</button>
               </div>
               <div class="shop-item">
-                <span>删卡 · 移除随机一张牌</span>
+                <span>随机遗忘 · 移除随机一张牌</span>
                 <span>35 物资</span>
-                <button class="btn btn-secondary btn-sm" onclick="game.removeRandomCard()">删卡</button>
+                <button class="btn btn-secondary btn-sm" onclick="game.removeRandomCard()">随机遗忘</button>
               </div>
+            </div>
+          </div>
+
+          <div class="shop-section">
+            <h3>我的牌组 (${this.cards.length}张)</h3>
+            <div class="shop-deck-list">
+              ${this.cards.map(cid => {
+                const cd = ALL_CARDS[cid];
+                if (!cd) return '';
+                return `
+                  <div class="shop-item small">
+                    <span>${cd.name} <span class="tag">费${cd.energyCost}</span></span>
+                    <button class="btn btn-ghost btn-sm" onclick="game.forgetCard('${cid}')" ${this.supply >= 35 && this.cards.length > 3 ? '' : 'disabled'}>遗忘 35</button>
+                  </div>`;
+              }).join('')}
             </div>
           </div>
 
@@ -1422,20 +1437,27 @@ class GameController {
         <div class="panel">
           <h2>改 造 站</h2>
           <p>物资 <span style="color:var(--gold-bright)">${this.supply}</span> · 牌组 ${this.cards.length}张</p>
-          <div class="upgrade-actions">
-            <button class="btn btn-ghost btn-sm" onclick="game.removeRandomCard()" ${this.supply >= 50 && this.cards.length > 3 ? '' : 'disabled'}>
-              50 物资 · 删一张牌
-            </button>
-          </div>
           <div class="upgrade-list">
             ${this.cards.map(cid => {
               const cd = ALL_CARDS[cid];
               if (!cd) return '';
+              const prof = this.proficiency[cid] || { xp: 0, level: 1 };
+              const levels = [0, 5, 14, 30, 55];
+              const nextXp = levels[Math.min(4, prof.level)] || 55;
               return `
                 <div class="upgrade-item">
                   <div class="upgrade-info">
-                    <div class="upgrade-name">${cd.name} <span class="tag">费${cd.energyCost}</span></div>
+                    <div class="upgrade-name">${cd.name} <span class="tag">费${cd.energyCost}</span> <span class="skill-lv">Lv${prof.level}</span></div>
                     <div class="upgrade-desc">${cd.desc}</div>
+                    <div class="skill-meta">熟练 ${prof.xp}/${nextXp} ${prof.level >= 5 ? '(MAX)' : ''}</div>
+                  </div>
+                  <div class="upgrade-btns">
+                    <button class="btn btn-secondary btn-sm" onclick="game.upgradeCard('${cid}')" ${this.supply >= 65 && prof.level < 5 ? '' : 'disabled'}>
+                      65 物资 升级 (+10经验)
+                    </button>
+                    <button class="btn btn-ghost btn-sm" onclick="game.forgetCard('${cid}')" ${this.supply >= 50 && this.cards.length > 3 ? '' : 'disabled'}>
+                      50 物资 遗忘
+                    </button>
                   </div>
                 </div>`;
             }).join('')}
@@ -1444,6 +1466,37 @@ class GameController {
         </div>
       </div>
     `;
+  }
+
+  upgradeCard(cardId) {
+    if (this.supply < 65) return;
+    audio.playUiClick();
+    this.supply -= 65;
+    if (!this.proficiency[cardId]) this.proficiency[cardId] = { xp: 0, level: 1 };
+    this.proficiency[cardId].xp += 10;
+    const xp = this.proficiency[cardId].xp;
+    const levels = [0, 5, 14, 30, 55];
+    let newLevel = 1;
+    for (let l = 4; l >= 0; l--) { if (xp >= levels[l]) { newLevel = l + 1; break; } }
+    this.proficiency[cardId].level = Math.min(5, newLevel);
+    const cd = ALL_CARDS[cardId];
+    this.toast(`${cd?.name || cardId} 升级为 Lv${this.proficiency[cardId].level}！`);
+    this.showUpgrade();
+  }
+
+  forgetCard(cardId) {
+    if (this.cards.length <= 3) { this.toast('牌组太少，无法再删'); return; }
+    const price = this.state === 'upgrade' ? 50 : 35;
+    if (this.supply < price) return;
+    audio.playUiClick();
+    this.supply -= price;
+    const idx = this.cards.indexOf(cardId);
+    if (idx < 0) return;
+    const cd = ALL_CARDS[cardId];
+    this.cards.splice(idx, 1);
+    this.toast(`遗忘了【${cd?.name || cardId}】`);
+    if (this.state === 'upgrade') this.showUpgrade();
+    else if (this.state === 'shop') this.showShop();
   }
 
   showEvent() {
