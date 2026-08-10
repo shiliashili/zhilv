@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>织律 · 后台管理</title>
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <!-- Sidebar -->
+  <nav class="admin-sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h1>织律</h1>
+      <span class="sidebar-sub">管理后台</span>
+    </div>
+    <ul class="nav-list" id="navList">
+      <li class="nav-item active" data-tab="overview">
+        <span class="nav-icon">📊</span> 总览仪表盘
+      </li>
+      <li class="nav-item" data-tab="characters">
+        <span class="nav-icon">👤</span> 角色编辑
+      </li>
+      <li class="nav-item" data-tab="cards">
+        <span class="nav-icon">🃏</span> 技能卡编辑
+      </li>
+      <li class="nav-item" data-tab="enemies">
+        <span class="nav-icon">👾</span> 敌人编辑
+      </li>
+      <li class="nav-item" data-tab="equipment">
+        <span class="nav-icon">⚔️</span> 装备编辑
+      </li>
+      <li class="nav-item" data-tab="statuses">
+        <span class="nav-icon">☠️</span> 状态编辑
+      </li>
+      <li class="nav-item" data-tab="bosses">
+        <span class="nav-icon">🐉</span> Boss 关卡
+      </li>
+      <li class="nav-item" data-tab="assets">
+        <span class="nav-icon">🖼️</span> 资产管理
+      </li>
+      <li class="nav-item" data-tab="export">
+        <span class="nav-icon">💾</span> 导出部署
+      </li>
+    </ul>
+    <div class="sidebar-footer">
+      <button class="btn btn-sm" onclick="Admin.resetAll()">🔄 重置所有修改</button>
+      <span class="version">v1.4-admin</span>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="admin-main" id="mainContent">
+    <!-- Populated by JS -->
+    <div class="loading">加载游戏数据中...</div>
+  </main>
+
+  <!-- Toast -->
+  <div class="admin-toast" id="toast"></div>
+
+  <!-- Edit Modal -->
+  <div class="admin-modal" id="editModal" style="display:none">
+    <div class="modal-overlay" onclick="Admin.closeModal()"></div>
+    <div class="modal-content" id="modalContent"></div>
+  </div>
+
+  <script src="../js/random.js"></script>
+  <script src="../js/data.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>

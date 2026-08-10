@@ -56,7 +56,7 @@ class GameController {
             <button class="btn btn-primary btn-large" onclick="game.selectCharacter()">入 局</button>
             <button class="btn btn-secondary" onclick="game.showHelp()">玩法说明</button>
           </div>
-          <div class="menu-version">v1.4 卡牌重构 · 抽牌/能量/主动打牌</div>
+          <div class="menu-version">v1.4 卡牌重构 · <a href="admin/" target="_blank" style="color:var(--gold);text-decoration:underline" onclick="event.stopPropagation()">后台管理</a></div>
           <div class="menu-characters">
             <div class="char-preview swordsman">
               <div class="char-icon" style="background-image:url('assets/char_swordsman.jpg')"></div>
