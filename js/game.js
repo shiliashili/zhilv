@@ -555,6 +555,15 @@ class GameController {
     `;
 
     this._refreshBattleHud();
+
+    // Wheel → horizontal scroll for card hand (desktop mouse wheel)
+    const scrollEl = document.getElementById('cardHandScroll');
+    if (scrollEl) {
+      scrollEl.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        scrollEl.scrollLeft += e.deltaY;
+      }, { passive: false });
+    }
   }
 
   _renderHandCards() {
