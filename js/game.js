@@ -28,6 +28,7 @@ class GameController {
     // Battle UI state
     this._targetMode = null;  // null | { cardInstanceId, targetMode }
     this._battleType = 'normal';
+    this._animating = false;  // 动画播放中，阻止重复操作
   }
 
   async start() {
@@ -417,6 +418,7 @@ class GameController {
     this.state = 'battle';
     this._battleType = type;
     this._targetMode = null;
+    this._animating = false;
 
     const typeName = type === 'boss' ? '首领战' : type === 'elite' ? '精英战' : '遭遇战';
     audio.playBgm(type === 'boss' ? 'boss' : type === 'elite' ? 'elite' : 'battle');
@@ -586,7 +588,7 @@ class GameController {
   }
 
   _clickCard(cardInstanceId) {
-    if (this.state !== 'battle') return;
+    if (this.state !== 'battle' || this._animating) return;
     audio.playSfx('card_select');
 
     // If already in target mode, cancel
@@ -622,7 +624,7 @@ class GameController {
   }
 
   _selectTarget(enemyId) {
-    if (!this._targetMode) return;
+    if (!this._targetMode || this._animating) return;
     const cardInstanceId = this._targetMode.cardInstanceId;
     this._targetMode = null;
     this._playCard(cardInstanceId, [enemyId]);
@@ -674,7 +676,8 @@ class GameController {
 
   _castUltimate() {
     const core = this.battleCore;
-    if (!core.canUltimate()) return;
+    if (!core.canUltimate() || this._animating) return;
+    this._animating = true;
 
     // Snapshot HPs
     const hpBefore = {};
@@ -686,9 +689,10 @@ class GameController {
     if (this.character.id === 'swordsman') {
       this._showUltimateCinematic(() => {
         const result = core.castUltimate();
-        if (!result.accepted) return;
+        if (!result.accepted) { this._animating = false; return; }
         this._applyUltimateAnimations(hpBefore, 'execute');
         this._refreshBattleHud();
+        this._animating = false;
         if (result.result?.isOver) {
           this._finishBattle(result);
           return;
@@ -697,9 +701,10 @@ class GameController {
       });
     } else {
       const result = core.castUltimate();
-      if (!result.accepted) return;
+      if (!result.accepted) { this._animating = false; return; }
       this._applyUltimateAnimations(hpBefore, 'execute');
       this._refreshBattleHud();
+      this._animating = false;
       if (result.result?.isOver) {
         this._finishBattle(result);
         return;
@@ -745,60 +750,59 @@ class GameController {
       overlay.classList.add('cinematic-show');
     });
 
-    // Hold: 1000ms
+    // Hold: 1300ms (was 900ms)
     setTimeout(() => {
       overlay.classList.add('cinematic-flash-out');
-    }, 900);
+    }, 1300);
 
-    // Fade out: 500ms
+    // Fade out: 500ms, total hold = 1300 + 400 = 1700ms + 500ms fade = 2200ms
     setTimeout(() => {
       overlay.classList.add('cinematic-hide');
       setTimeout(() => {
         overlay.remove();
         if (onComplete) onComplete();
       }, 500);
-    }, 1700);
+    }, 2200);
   }
 
   _endTurn() {
-    if (this.state !== 'battle') return;
+    if (this.state !== 'battle' || this._animating) return;
     audio.playSfx('card_discard');
 
     const core = this.battleCore;
     const hpBefore = core.hp;
+    this._animating = true;
 
     // Run enemy turn
     const result = core.endTurn();
+    if (!result.accepted) { this._animating = false; return; }
 
-    if (!result.accepted) return;
+    // Render new battle UI immediately (prevents race condition)
+    this._renderBattleUI();
 
-    // Animate enemy attacks on player
-    const damageTaken = hpBefore - core.hp;
-    if (damageTaken > 0) {
-      // Animate each alive enemy attacking
-      core.enemies.forEach(e => {
-        if (e.alive) {
-          this._animateEnemyAttack(e.id);
-        }
-      });
-      setTimeout(() => {
-        this._animatePlayerHit(damageTaken);
-        this._refreshBattleHud();
-      }, 200);
-    }
-
-    this._refreshBattleHud();
-
+    // Game over?
     if (result.result?.isOver) {
-      setTimeout(() => { if (this.state === 'battle') this._finishBattle(result); }, 350);
+      setTimeout(() => {
+        if (this.state === 'battle') this._finishBattle(result);
+        this._animating = false;
+      }, 400);
       return;
     }
 
-    // Delay before showing new hand
-    setTimeout(() => {
-      if (this.state !== 'battle') return;
-      this._renderBattleUI();
-    }, 500);
+    // Play enemy attack animations on top of new UI
+    const damageTaken = hpBefore - core.hp;
+    if (damageTaken > 0) {
+      setTimeout(() => {
+        core.enemies.forEach(e => { if (e.alive) this._animateEnemyAttack(e.id); });
+      }, 50);
+      setTimeout(() => {
+        this._animatePlayerHit(damageTaken);
+        this._refreshBattleHud();
+        this._animating = false;
+      }, 250);
+    } else {
+      this._animating = false;
+    }
   }
 
   _reRenderHand() {
@@ -1123,6 +1127,7 @@ class GameController {
   _finishBattle(result) {
     if (this.state !== 'battle') return;
     this.state = 'battle_end';
+    this._animating = false;
     audio.stopBgm();
 
     const coreResult = result.result || this.battleCore.getResult();
