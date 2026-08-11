@@ -392,7 +392,11 @@ class GameController {
     }
     } catch(e) {
       console.error('[selectRouteNode] ERROR:', e.message, e.stack);
-      document.getElementById('app').innerHTML = '<div style="padding:20px;color:#e0604a"><h2>路由错误</h2><pre>' + e.message + '</pre></div>';
+      this._showFatalError('路由错误', e, () => {
+        // Emergency recovery: go back to route map
+        if (this.routeMap) this.showRouteMap();
+        else this.showMenu();
+      });
     }
   }
 
@@ -427,11 +431,42 @@ class GameController {
     this._renderBattleUI();
     } catch(e) {
       console.error('[startBattle] ERROR:', e.message, e.stack);
-      document.getElementById('app').innerHTML = '<div style="padding:20px;color:#e0604a;background:#1a1008;border:1px solid #e0604a;border-radius:8px;margin:20px"><h2>战斗系统错误</h2><pre style="white-space:pre-wrap;word-break:break-all">' + e.message + '</pre><button onclick="location.reload()" style="margin-top:12px;padding:8px 16px">刷新重试</button></div>';
+      console.error('[startBattle] Context: type=' + type + ' layer=' + this.currentLayer + ' region=' + this.currentRegion);
+      console.error('[startBattle] Character:', this.character?.id, 'HP:', this.hp, 'Cards:', this.cards?.length);
+      this._showFatalError('战斗入场失败', e, () => {
+        // Clear battle state and go back to route map
+        this.battleCore = null;
+        this.state = 'route_map';
+        this.showRouteMap();
+      });
     }
   }
 
+  /** Unified fatal error display with retry */
+  _showFatalError(title, error, onRetry) {
+    const stackLines = (error.stack || '').split('\n').slice(0, 6).join('\n');
+    document.getElementById('app').innerHTML = `
+      <div class="screen" style="min-height:100vh;padding:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px">
+        <div style="width:100%;max-width:480px;background:linear-gradient(160deg,rgba(38,32,23,0.96),rgba(24,20,14,0.98));border:1px solid #e0604a;border-radius:12px;padding:24px">
+          <h2 style="color:#e0604a;font-family:var(--font-brush);font-size:24px;letter-spacing:4px;margin-bottom:4px">${title}</h2>
+          <p style="color:var(--paper);font-size:13px;margin-bottom:16px;word-break:break-all">${error.message}</p>
+          <div style="background:rgba(0,0,0,0.5);border-radius:6px;padding:10px;margin-bottom:16px;max-height:120px;overflow-y:auto">
+            <pre style="font-size:10px;color:var(--paper-dim);white-space:pre-wrap;word-break:break-all">${stackLines}</pre>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary" id="errRetryBtn" style="flex:1;padding:10px;font-size:14px">🔄 返回重试</button>
+            <button class="btn btn-secondary" onclick="game.showMenu()" style="flex:1;padding:10px;font-size:14px">🏠 回主菜单</button>
+          </div>
+          <p style="font-size:10px;color:var(--paper-mute);margin-top:12px;text-align:center">错误已记录至控制台 (F12)</p>
+        </div>
+      </div>`;
+    document.getElementById('errRetryBtn').addEventListener('click', () => {
+      if (onRetry) onRetry();
+    });
+  }
+
   _renderBattleUI() {
+    try {
     const core = this.battleCore;
     const state = core.getState();
     const char = this.character;
@@ -563,6 +598,12 @@ class GameController {
         e.preventDefault();
         scrollEl.scrollLeft += e.deltaY;
       }, { passive: false });
+    }
+    } catch(e) {
+      console.error('[renderBattleUI] ERROR:', e.message, e.stack);
+      this._showFatalError('战斗界面渲染失败', e, () => {
+        this.battleCore = null; this.state = 'route_map'; this.showRouteMap();
+      });
     }
   }
 
