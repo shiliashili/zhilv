@@ -46,8 +46,14 @@ class BattleCore {
     this.swordIntent = 0;
     this.momentum = 0;
 
-    // Signature sword
+    // Signature sword / Martial style
     this.signatureSword = setup.signatureSword || null;
+    this.martialStyle = setup.martialStyle || null;
+
+    // 混元真意：开局自带1蓄势
+    if (this.martialStyle && this.martialStyle.effect?.startMomentum) {
+      this.momentum = this.martialStyle.effect.startMomentum;
+    }
 
     // Intent tracking - MUST come before _initEnemies (which uses it)
     this.enemyPlans = {}; // { enemyId: EnemyActionPlan }
@@ -74,6 +80,7 @@ class BattleCore {
     this.ultimateCastedThisTurn = false;
     this.totalHitsDealt = 0;
     this.uniqueCardsPlayedThisTurn = new Set();
+    this._firstFistKickMomentumDone = false; // 疾风真意追踪
 
     // Equipment state
     this._eqState = {
@@ -266,7 +273,16 @@ class BattleCore {
         }
       }
       if (rc.momentum) {
-        this.momentum = Math.min(3, this.momentum + rc.momentum);
+        let gain = rc.momentum;
+        // 疾风真意：每回合第一张拳/脚额外+1蓄势
+        if (this.martialStyle && this.martialStyle.effect?.firstFistKickMomentum
+            && (cardDef.roleCategory === 'fist' || cardDef.roleCategory === 'kick')
+            && !this._firstFistKickMomentumDone) {
+          this._firstFistKickMomentumDone = true;
+          gain += this.martialStyle.effect.firstFistKickMomentum;
+          this._log(`💨 ${this.martialStyle.name}：首张拳脚额外+${this.martialStyle.effect.firstFistKickMomentum}蓄势`);
+        }
+        this.momentum = Math.min(this._momentumMax(), this.momentum + gain);
         this._addEvent('resource_changed', { resource: 'momentum', value: this.momentum });
       }
     }
@@ -393,6 +409,7 @@ class BattleCore {
     this.cardsPlayedThisTurn = [];
     this.uniqueCardsPlayedThisTurn.clear();
     this.ultimateCastedThisTurn = false;
+    this._firstFistKickMomentumDone = false;
     this._eqState.firstHitPoisonUsed = false;
     this._eqState.energyOnReshuffleUsed = 0;
     this._eqState.firstQiDiscounted = false;
@@ -488,7 +505,7 @@ class BattleCore {
         this._log(`⬆ ${effect.buffId} x${this.buffs[effect.buffId].stacks}`);
       } else if (effect.type === 'resource_change') {
         if (effect.resourceId === 'momentum') {
-          this.momentum = Math.min(3, this.momentum + (effect.delta || 0));
+          this.momentum = Math.min(this._momentumMax(), this.momentum + (effect.delta || 0));
           this._addEvent('resource_changed', { resource: 'momentum', value: this.momentum });
         }
       } else if (effect.type === 'modify_next_damage') {
@@ -588,6 +605,12 @@ class BattleCore {
       if (enemy) this._applyStatus(enemy, 'armorBreak', 1);
     }
 
+    // 降龙真意：重式命中附带破甲
+    if (this.martialStyle && this.martialStyle.effect?.heavyArmorBreak && isHeavy && targetIds.length > 0) {
+      const enemy = this.enemies.find(e => e.id === targetIds[0]);
+      if (enemy) this._applyStatus(enemy, 'armorBreak', this.martialStyle.effect.heavyArmorBreak);
+    }
+
     // 轻羽剑穗：0费牌+2护盾
     const featherTassel = this.equipment.find(e => e.id === 'eq_feather_tassel');
     if (featherTassel && this._calcCost(cardInst, cardDef) === 0 && !this._eqState.zeroCostShieldUsed) {
@@ -647,9 +670,10 @@ class BattleCore {
       mult *= (1 + this.swordIntent * 0.10);
     }
 
-    // Heavy bonus (武圣)
+    // Heavy bonus (武圣) — 降龙真意提升重式倍率
     if (isHeavy) {
-      mult *= 1.60;
+      const baseHeavy = (this.martialStyle && this.martialStyle.effect?.heavyMult) || 1.60;
+      mult *= baseHeavy;
       // Card-specific heavy bonus
       if (cardDef.onCast?.heavyBonus) {
         mult *= (1 + cardDef.onCast.heavyBonus);
@@ -706,13 +730,42 @@ class BattleCore {
   }
 
   _checkHeavy(cardDef) {
-    if (this.momentum >= 3 && (cardDef.roleCategory === 'fist' || cardDef.roleCategory === 'kick')) {
+    const max = this._momentumMax();
+    if (this.momentum >= max && (cardDef.roleCategory === 'fist' || cardDef.roleCategory === 'kick')) {
       this.momentum = 0;
       this._addEvent('resource_changed', { resource: 'momentum', value: 0 });
       this._log('💥 重式触发！');
+      this._applyMartialStyleHeavy(cardDef);
       return true;
     }
     return false;
+  }
+
+  /** 蓄势上限（混元真意 +1） */
+  _momentumMax() {
+    let max = 3;
+    if (this.martialStyle && this.martialStyle.effect?.momentumMaxAdd) {
+      max += this.martialStyle.effect.momentumMaxAdd;
+    }
+    return max;
+  }
+
+  /** 重式触发时应用武道真意效果 */
+  _applyMartialStyleHeavy(cardDef) {
+    const fx = this.martialStyle?.effect;
+    if (!fx) return;
+
+    // 太极真意：触发重式获得护盾
+    if (fx.heavyShield) {
+      this.shield += fx.heavyShield;
+      this._addEvent('shield_changed', { shield: this.shield, delta: fx.heavyShield });
+      this._log(`🛡 ${this.martialStyle.name}：重式获得${fx.heavyShield}护盾`);
+    }
+    // 疾风真意：触发重式抽1张
+    if (fx.heavyDraw) {
+      this._drawCards(fx.heavyDraw);
+      this._log(`🃏 ${this.martialStyle.name}：重式抽${fx.heavyDraw}张`);
+    }
   }
 
   _calcCost(cardInst, cardDef) {
@@ -723,6 +776,11 @@ class BattleCore {
     if (jinghong && !this._eqState.firstQiDiscounted && cardDef.roleCategory === 'sword_qi') {
       this._eqState.firstQiDiscounted = true;
       cost = Math.max(0, cost - 1);
+    }
+
+    // 太极真意：金钟劲费用-1
+    if (this.martialStyle && this.martialStyle.effect?.goldenBellCostDown && cardDef.id === 'ms_golden_bell') {
+      cost = Math.max(0, cost - this.martialStyle.effect.goldenBellCostDown);
     }
 
     // 裂脉扳指：每回合第一张攻击牌费用+1
@@ -1139,6 +1197,8 @@ class BattleCore {
       })),
       swordIntent: this.swordIntent,
       momentum: this.momentum,
+      momentumMax: this._momentumMax(),
+      martialStyle: this.martialStyle,
       energy: this.energy,
       maxEnergy: this.maxEnergy,
       hand: this.hand,

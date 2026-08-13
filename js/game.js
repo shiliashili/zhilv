@@ -187,6 +187,7 @@ class GameController {
     this.supply = 30;
     this.equipment = [];
     this.signatureSword = null;
+    this.martialStyle = null;
     this.powerBuff = 0;
     this.proficiency = {};
     this.cards.forEach(cid => {
@@ -198,6 +199,8 @@ class GameController {
 
     if (charId === 'swordsman') {
       this.selectSignatureSword();
+    } else if (charId === 'martialArtist') {
+      this.selectMartialStyle();
     } else {
       this.startRun();
     }
@@ -229,6 +232,37 @@ class GameController {
   pickSword(swordId) {
     audio.playUiClick();
     this.signatureSword = SIGNATURE_SWORDS.find(s => s.id === swordId);
+    this.startRun();
+  }
+
+  /** 武圣开局择武道真意 */
+  selectMartialStyle() {
+    this.state = 'style_select';
+    const styles = this.character.styleChoices || MARTIAL_STYLES;
+    document.getElementById('app').innerHTML = `
+      <div class="screen sword-select-screen">
+        <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_bamboo.jpg')});opacity:0.15"></div>
+        <h2 class="screen-title">悟 真 意</h2>
+        <p class="screen-subtitle">每局只修一门真意，整局锁定</p>
+        <div class="sword-cards">
+          ${styles.map(style => `
+            <div class="sword-card" onclick="game.pickStyle('${style.id}')">
+              <div class="seal sword-name-seal">${style.glyph}</div>
+              <div style="flex:1;min-width:0">
+                <h3>${style.name}</h3>
+                <p>${style.desc}</p>
+              </div>
+              <button class="btn btn-primary btn-sm">悟此道</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  pickStyle(styleId) {
+    audio.playUiClick();
+    this.martialStyle = (this.character.styleChoices || MARTIAL_STYLES).find(s => s.id === styleId);
     this.startRun();
   }
 
@@ -266,6 +300,7 @@ class GameController {
           <div class="header-left">
             <div class="char-badge">${char.glyph} ${char.name}</div>
             ${this.signatureSword ? `<div class="sword-badge">名剑 · ${this.signatureSword.name}</div>` : ''}
+            ${this.martialStyle ? `<div class="sword-badge">真意 · ${this.martialStyle.name}</div>` : ''}
           </div>
           <div class="header-right">
             <div class="resource-display"><span class="res-hp">命</span> ${this.hp}/${this.maxHp}</div>
@@ -412,6 +447,7 @@ class GameController {
       cards: this.cards,
       equipment: this.equipment,
       signatureSword: this.signatureSword,
+      martialStyle: this.martialStyle,
       powerBuff: this.powerBuff,
       currentHp: this.hp,
       enemies: encounter.enemies,
@@ -561,7 +597,8 @@ class GameController {
             </div>` : `
             <div class="resource-display-v2" id="momentumDisplay">
               <span class="resource-label">蓄势</span>
-              ${[0,1,2,3].map(i => `<span class="momentum-dot ${i < state.momentum ? 'filled' : ''}"></span>`).join('')}
+              ${Array.from({length: state.momentumMax}).map((_, i) => `<span class="momentum-dot ${i < state.momentum ? 'filled' : ''}"></span>`).join('')}
+              ${state.martialStyle ? `<span class="martial-style-tag">${state.martialStyle.name}</span>` : ''}
             </div>`}
           </div>
           <div class="hud-right">
@@ -1665,6 +1702,7 @@ class GameController {
               <div class="stat-card"><div class="stat-card-val">${this.cards.length}张</div><div class="stat-card-label">牌组</div></div>
             </div>
             ${this.signatureSword ? `<div class="sword-info"><span class="sword-name-tag">${this.signatureSword.name}</span> ${this.signatureSword.desc}</div>` : ''}
+            ${this.martialStyle ? `<div class="sword-info"><span class="sword-name-tag">${this.martialStyle.name}</span> ${this.martialStyle.desc}</div>` : ''}
           </div>
           <div class="stats-section">
             <h3>牌组详情</h3>

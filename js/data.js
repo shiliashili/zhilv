@@ -145,7 +145,7 @@ const SWORDSMAN_CARDS = [
       { type: 'conditional', condition: 'last_card_was_qi', effects: [{ type: 'gain_shield', amount: 3 }] }
     ],
     onCast: { resourceChange: { sword_intent: 1 } },
-    desc: '1.00×＋5护盾；+1剑意；若上一张为剑气，护盾+3', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
+    desc: '1.00×；+5护盾（上张剑气时+3）；+1剑意', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
   { id: 'ss_swallow_return', name: '燕返', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
     tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: ['retain'],
     effects: [{ type: 'damage', multiplier: 1.35, hits: 1 }],
@@ -172,7 +172,7 @@ const SWORDSMAN_CARDS = [
       { type: 'conditional', condition: 'enemy_intent_is_attack', effects: [{ type: 'gain_shield', amount: 3 }] }
     ],
     onCast: { resourceChange: { sword_intent: 1 } },
-    desc: '0.90×＋7护盾；+1剑意；敌意图为攻击时护盾+3', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
+    desc: '0.90×；+7护盾（敌攻击时+3）；+1剑意', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
 
   // ===== 剑气 =====
   { id: 'ss_green_edge_qi', name: '青锋剑气', cardType: 'attack', energyCost: 1, roleCategory: 'sword_qi',
@@ -308,6 +308,23 @@ const MARTIALARTIST_CARDS = [
     desc: '蓄势+2，抽1张，消耗', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
 ];
 
+// ---- 武道真意 v1.4（武圣专属，对标剑圣名剑） ----
+// 每局选一种，整局锁定，改变蓄势/重式机制
+const MARTIAL_STYLES = [
+  { id: 'style_dragon', name: '降龙真意', glyph: '刚',
+    desc: '重式伤害提升至2.0倍，重式命中附带破甲1',
+    effect: { heavyMult: 2.0, heavyArmorBreak: 1 } },
+  { id: 'style_taiji', name: '太极真意', glyph: '柔',
+    desc: '触发重式时获得8护盾，金钟劲费用-1',
+    effect: { heavyShield: 8, goldenBellCostDown: 1 } },
+  { id: 'style_hunyuan', name: '混元真意', glyph: '浑',
+    desc: '蓄势上限+1（满4触发重式），开局自带1蓄势',
+    effect: { momentumMaxAdd: 1, startMomentum: 1 } },
+  { id: 'style_swift', name: '疾风真意', glyph: '疾',
+    desc: '每回合第一张拳/脚额外+1蓄势，触发重式后抽1张',
+    effect: { firstFistKickMomentum: 1, heavyDraw: 1 } }
+];
+
 // ---- Characters v1.4 ----
 const CHARACTERS = {
   swordsman: {
@@ -345,6 +362,7 @@ const CHARACTERS = {
     ],
     cardPool: MARTIALARTIST_CARDS,
     resource: { name: '蓄势', key: 'momentum', max: 3, start: 0, desc: '打出拳/脚+1，满3后下一拳/脚进入重式' },
+    styleChoices: MARTIAL_STYLES,
     color: '#FF7043', bgColor: '#FBE9E7',
     description: '大开大合，以力破巧，拳脚重击'
   }
