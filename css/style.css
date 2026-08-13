@@ -942,6 +942,12 @@ body {
 }
 .enemy-unit.elite .sprite-enemy { width: 72px; height: 72px; font-size: 40px; }
 .enemy-unit.boss .sprite-enemy { width: 88px; height: 88px; font-size: 48px; border-width: 2px; }
+.enemy-sprite-img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
+}
 .enemy-name { font-size: 11px; color: var(--paper-dim); letter-spacing: 2px; }
 .hp-bar-container.small { max-width: 86px; }
 .hp-bar-container.small .hp-bar { height: 5px; }

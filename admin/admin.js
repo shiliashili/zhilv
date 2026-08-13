@@ -403,40 +403,99 @@ const Admin = {
   // ---- ASSETS ----
 
   _renderAssets(main) {
-    const assets = [
-      { name: '主菜单背景', path: '../assets/bg_menu_fan_kuan.jpg', info: '范宽《溪山行旅图》' },
-      { name: '战斗背景', path: '../assets/bg_battle_guo_xi.jpg', info: '郭熙《早春图》' },
-      { name: '通用背景', path: '../assets/bg_bamboo.jpg', info: '郑燮《竹石图》' },
-      { name: '路线图装饰', path: '../assets/bg_map_fuchun.jpg', info: '黄公望《富春山居图》' },
-      { name: '剑圣立绘', path: '../assets/char_swordsman.jpg', info: '角色图标' },
-      { name: '武圣立绘', path: '../assets/char_martial.jpg', info: '角色图标' },
-      { name: '大招演出图', path: '../assets/ultimate_cinematic.jpg', info: '万剑归流演出' },
+    // 场景/角色资产（key 对应 asset-override.js 的 _keyMap）
+    const sceneAssets = [
+      { name: '主菜单背景', key: 'bg_menu', path: '../assets/bg_menu_fan_kuan.jpg', info: '范宽《溪山行旅图》' },
+      { name: '战斗背景', key: 'bg_battle', path: '../assets/bg_battle_guo_xi.jpg', info: '郭熙《早春图》' },
+      { name: '通用背景', key: 'bg_bamboo', path: '../assets/bg_bamboo.jpg', info: '郑燮《竹石图》' },
+      { name: '路线图装饰', key: 'bg_map', path: '../assets/bg_map_fuchun.jpg', info: '黄公望《富春山居图》' },
+      { name: '剑圣立绘', key: 'char_swordsman', path: '../assets/char_swordsman.jpg', info: '角色图标' },
+      { name: '武圣立绘', key: 'char_martial', path: '../assets/char_martial.jpg', info: '角色图标' },
+      { name: '大招演出图', key: 'ultimate', path: '../assets/ultimate_cinematic.jpg', info: '万剑归流演出' },
     ];
+
+    const enemies = this._data.enemies;
+
     main.innerHTML = this._pageHeader('🖼️ 资产管理') + `
-      <p style="color:var(--text-dim);margin-bottom:16px">提示：替换资源文件需通过 Git 或直接在 assets/ 目录替换文件</p>
-      <div class="asset-grid">
-        ${assets.map(a => `
-          <div class="asset-card">
-            <img src="${a.path}" alt="${a.name}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22160%22 height=%22100%22><rect fill=%22%232a3348%22 width=%22160%22 height=%22100%22/><text x=%2280%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%2394a3b8%22 font-size=%2212%22>无预览</text></svg>'">
-            <div class="asset-name">${a.name}</div>
-            <div class="asset-meta">${a.info}</div>
-          </div>
-        `).join('')}
+      <div style="background:rgba(59,130,246,0.08);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:var(--text-dim)">
+        <strong style="color:var(--text)">💡 资产替换说明：</strong>
+        点击「替换」上传新图片即可覆盖游戏资源（存于浏览器 localStorage），游戏会立即使用新图片。<br>
+        图片建议 ≤ 3MB，格式 PNG/JPG/WebP。覆盖仅对当前浏览器生效，可通过「导出部署」备份。
       </div>
 
-      <h3 style="margin-top:24px;margin-bottom:12px;">敌人图标 (基于定义)</h3>
+      <h3 style="margin:16px 0 12px;">场景 & 角色贴图</h3>
       <div class="asset-grid">
-        ${this._data.enemies.slice(0, 8).map(e => `
+        ${sceneAssets.map(a => {
+          const override = WeavelineAssets.getOverride(a.key);
+          const displaySrc = override || a.path;
+          return `
           <div class="asset-card">
-            <div style="width:100%;height:100px;display:flex;align-items:center;justify-content:center;background:#1a2235;border-radius:4px">
-              <span style="font-size:48px;color:${e.color || '#b8a684'}">${e.glyph || e.name.charAt(0)}</span>
+            <img src="${displaySrc}" alt="${a.name}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22160%22 height=%22100%22><rect fill=%22%232a3348%22 width=%22160%22 height=%22100%22/><text x=%2280%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%2394a3b8%22 font-size=%2212%22>无预览</text></svg>'">
+            <div class="asset-name">${a.name} ${override ? '<span class="tag gold">已替换</span>' : ''}</div>
+            <div class="asset-meta">${a.info}</div>
+            <div style="display:flex;gap:6px;margin-top:8px;justify-content:center">
+              <button class="btn btn-sm btn-primary" onclick="Admin._uploadAsset('zhilv_asset_${a.key}', '${a.name}')">🖼 替换</button>
+              ${override ? `<button class="btn btn-sm btn-danger" onclick="Admin._resetAsset('zhilv_asset_${a.key}', '${a.name}')">还原</button>` : ''}
             </div>
-            <div class="asset-name">${e.name}</div>
-            <div class="asset-meta">${e.type}</div>
-          </div>
-        `).join('')}
+          </div>`;
+        }).join('')}
+      </div>
+
+      <h3 style="margin:24px 0 12px;">怪物贴图</h3>
+      <p style="color:var(--text-dim);font-size:12px;margin-bottom:12px">上传图片后，战斗中的怪物将从书法字替换为贴图</p>
+      <div class="asset-grid">
+        ${enemies.map(e => {
+          const key = 'zhilv_asset_enemy_' + e.id;
+          const override = WeavelineAssets.getEnemyImage(e.id);
+          return `
+          <div class="asset-card">
+            ${override
+              ? `<img src="${override}" alt="${e.name}">`
+              : `<div style="width:100%;height:100px;display:flex;align-items:center;justify-content:center;background:#1a2235;border-radius:4px"><span style="font-size:48px;color:${e.color || '#b8a684'}">${e.glyph || e.name.charAt(0)}</span></div>`
+            }
+            <div class="asset-name">${e.name} ${override ? '<span class="tag gold">已替换</span>' : ''}</div>
+            <div class="asset-meta">${e.type === 'boss' ? 'Boss' : e.type === 'elite' ? '精英' : '普通'}</div>
+            <div style="display:flex;gap:6px;margin-top:8px;justify-content:center">
+              <button class="btn btn-sm btn-primary" onclick="Admin._uploadAsset('${key}', '${e.name}')">🖼 替换</button>
+              ${override ? `<button class="btn btn-sm btn-danger" onclick="Admin._resetAsset('${key}', '${e.name}')">还原</button>` : ''}
+            </div>
+          </div>`;
+        }).join('')}
       </div>
     `;
+  },
+
+  /** 上传图片替换资产 */
+  _uploadAsset(storageKey, label) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg,image/webp';
+    input.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.size > 3 * 1024 * 1024) {
+        this.toast('⚠️ 图片超过3MB，可能超出 localStorage 容量', 'warning');
+      }
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          localStorage.setItem(storageKey, ev.target.result);
+          this.toast(`✅ ${label} 已替换`);
+          this._renderTab('assets');
+        } catch (err) {
+          this.toast('❌ 存储失败：图片过大，localStorage 容量不足（约5MB）', 'warning');
+        }
+      };
+      reader.readAsDataURL(file);
+    };
+    input.click();
+  },
+
+  /** 还原默认资产 */
+  _resetAsset(storageKey, label) {
+    localStorage.removeItem(storageKey);
+    this.toast(`↩️ ${label} 已还原默认`);
+    this._renderTab('assets');
   },
 
   // ---- EXPORT ----

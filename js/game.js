@@ -44,7 +44,7 @@ class GameController {
     audio.stopBgm();
     document.getElementById('app').innerHTML = `
       <div class="screen menu-screen">
-        <div class="ink-bg" style="background-image:url('assets/bg_menu_fan_kuan.jpg')"></div>
+        <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_menu_fan_kuan.jpg')})"></div>
         <div class="menu-content">
           <div class="game-title">
             <div class="title-calligraphy">织律</div>
@@ -59,12 +59,12 @@ class GameController {
           <div class="menu-version">v1.4 卡牌重构 · <a href="admin/" target="_blank" style="color:var(--gold);text-decoration:underline" onclick="event.stopPropagation()">后台管理</a></div>
           <div class="menu-characters">
             <div class="char-preview swordsman">
-              <div class="char-icon" style="background-image:url('assets/char_swordsman.jpg')"></div>
+              <div class="char-icon" style="background-image:url(${wlAsset('assets/char_swordsman.jpg')})"></div>
               <div class="char-name">剑圣</div>
               <div class="char-desc">灵巧华丽 · 剑气纵横</div>
             </div>
             <div class="char-preview martial">
-              <div class="char-icon" style="background-image:url('assets/char_martial.jpg')"></div>
+              <div class="char-icon" style="background-image:url(${wlAsset('assets/char_martial.jpg')})"></div>
               <div class="char-name">武圣</div>
               <div class="char-desc">大开大合 · 以力破巧</div>
             </div>
@@ -119,13 +119,13 @@ class GameController {
     this.state = 'character_select';
     document.getElementById('app').innerHTML = `
       <div class="screen char-select-screen">
-        <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.18"></div>
+        <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_bamboo.jpg')});opacity:0.18"></div>
         <h2 class="screen-title">择 角</h2>
         <p class="screen-subtitle">剑走轻灵 · 拳行厚重</p>
         <div class="char-cards">
           <div class="char-card swordsman" onclick="game.pickCharacter('swordsman')">
             <div class="char-card-head">
-              <div class="char-portrait" style="background-image:url('assets/char_swordsman.jpg')"></div>
+              <div class="char-portrait" style="background-image:url(${wlAsset('assets/char_swordsman.jpg')})"></div>
               <div>
                 <h3>剑圣</h3>
                 <div class="char-stats">
@@ -146,7 +146,7 @@ class GameController {
           </div>
           <div class="char-card martial" onclick="game.pickCharacter('martialArtist')">
             <div class="char-card-head">
-              <div class="char-portrait" style="background-image:url('assets/char_martial.jpg')"></div>
+              <div class="char-portrait" style="background-image:url(${wlAsset('assets/char_martial.jpg')})"></div>
               <div>
                 <h3>武圣</h3>
                 <div class="char-stats">
@@ -207,7 +207,7 @@ class GameController {
     this.state = 'sword_select';
     document.getElementById('app').innerHTML = `
       <div class="screen sword-select-screen">
-        <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.15"></div>
+        <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_bamboo.jpg')});opacity:0.15"></div>
         <h2 class="screen-title">择 剑</h2>
         <p class="screen-subtitle">每局只执一把名剑，整局锁定</p>
         <div class="sword-cards">
@@ -275,7 +275,7 @@ class GameController {
           </div>
         </div>
         <div class="route-map-title">第${REGIONS[this.currentRegion].name} · 第 ${this.currentLayer + 1} 层</div>
-        <div class="scroll-strip" style="background-image:url('assets/bg_map_fuchun.jpg')"></div>
+        <div class="scroll-strip" style="background-image:url(${wlAsset('assets/bg_map_fuchun.jpg')})"></div>
         <div class="route-map-container" id="routeMapContainer">
           <div class="route-map" id="routeMap">`;
 
@@ -473,7 +473,7 @@ class GameController {
 
     document.getElementById('app').innerHTML = `
       <div class="screen battle-screen">
-        <div class="battle-bg" style="background-image:url('assets/bg_battle_guo_xi.jpg')"></div>
+        <div class="battle-bg" style="background-image:url(${wlAsset('assets/bg_battle_guo_xi.jpg')})"></div>
 
         <!-- Enemy intents bar -->
         <div class="enemy-intents-bar" id="intentsBar">
@@ -501,7 +501,7 @@ class GameController {
                    style="${this._targetMode && e.alive ? 'cursor:pointer;outline:2px solid var(--gold);' : ''}">
                 <div class="status-row" id="status_${i}"></div>
                 <div class="enemy-sprite">
-                  <div class="sprite-enemy" style="--enemy-color:${e.color || '#b8a684'}">${e.definition?.glyph || e.name.charAt(0)}</div>
+                  <div class="sprite-enemy" style="--enemy-color:${e.color || '#b8a684'}">${this._enemySprite(e)}</div>
                 </div>
                 <div class="enemy-name">${e.name}</div>
                 <div class="hp-bar-container small">
@@ -516,7 +516,7 @@ class GameController {
           <!-- Player -->
           <div class="player-area">
             <div class="player-sprite" id="playerSprite">
-              <div class="sprite-body ${char.id} has-portrait" style="background-image:url('${char.portrait}')">
+              <div class="sprite-body ${char.id} has-portrait" style="background-image:url('${wlAsset(char.portrait)}')">
                 <div class="sprite-aura"></div>
                 <span class="sprite-glyph">${char.glyph}</span>
               </div>
@@ -784,7 +784,7 @@ class GameController {
     overlay.innerHTML = `
       <div class="ultimate-cinematic-bg"></div>
       <div class="ultimate-cinematic-image-wrap">
-        <img src="assets/ultimate_cinematic.jpg" class="ultimate-cinematic-image" />
+        <img src="${wlAsset('assets/ultimate_cinematic.jpg')}" class="ultimate-cinematic-image" />
         <div class="ultimate-cinematic-vignette"></div>
       </div>
       <div class="ultimate-cinematic-text">
@@ -820,7 +820,6 @@ class GameController {
     audio.playSfx('card_discard');
 
     const core = this.battleCore;
-    const hpBefore = core.hp;
     this._animating = true;
 
     // Run enemy turn
@@ -839,20 +838,46 @@ class GameController {
       return;
     }
 
-    // Play enemy attack animations on top of new UI
-    const damageTaken = hpBefore - core.hp;
-    if (damageTaken > 0) {
+    // Play enemy attack animations — even if shield absorbed all damage
+    const summary = result.enemyTurnSummary || {};
+    if (summary.attacked) {
+      const hpDamage = summary.hpDamage || 0;
+      const shieldAbsorbed = summary.shieldAbsorbed || 0;
       setTimeout(() => {
         core.enemies.forEach(e => { if (e.alive) this._animateEnemyAttack(e.id); });
       }, 50);
       setTimeout(() => {
-        this._animatePlayerHit(damageTaken);
+        // Show player hit (even if damage went to shield)
+        if (hpDamage > 0) {
+          this._animatePlayerHit(hpDamage);
+        } else if (shieldAbsorbed > 0) {
+          // Shield absorbed — show shield block feedback
+          this._animateShieldBlock(shieldAbsorbed);
+        }
         this._refreshBattleHud();
         this._animating = false;
       }, 250);
     } else {
       this._animating = false;
     }
+  }
+
+  /** Animate shield absorption (no HP loss) */
+  _animateShieldBlock(amount) {
+    const playerEl = document.getElementById('playerSprite');
+    if (playerEl) {
+      playerEl.classList.remove('hit-flash');
+      void playerEl.offsetWidth;
+      playerEl.classList.add('hit-flash');
+      setTimeout(() => playerEl.classList.remove('hit-flash'), 260);
+      const popup = document.createElement('div');
+      popup.className = 'dmg-popup';
+      popup.style.color = '#6a92ad';
+      popup.textContent = `🛡-${Math.floor(amount)}`;
+      playerEl.appendChild(popup);
+      setTimeout(() => popup.remove(), 950);
+    }
+    this._shake('light');
   }
 
   _reRenderHand() {
@@ -871,6 +896,15 @@ class GameController {
   }
 
   // ============ ANIMATION SYSTEM ============
+
+  /** 敌人立绘：优先用后台替换的贴图，否则用书法字 glyph */
+  _enemySprite(e) {
+    const img = WeavelineAssets.getEnemyImage(e.definitionId || e.id);
+    if (img) {
+      return `<img src="${img}" class="enemy-sprite-img" alt="${e.name}" />`;
+    }
+    return e.glyph || e.name.charAt(0);
+  }
 
   /** Show cast banner */
   _showCastBanner(cardName, tag, isUltimate) {
@@ -1252,7 +1286,7 @@ class GameController {
 
     document.getElementById('app').innerHTML = `
       <div class="screen reward-screen">
-        <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.14"></div>
+        <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_bamboo.jpg')});opacity:0.14"></div>
         <div class="panel victory-panel">
           <h2>凯 旋</h2>
           <div class="reward-summary">
@@ -1353,7 +1387,7 @@ class GameController {
 
     document.getElementById('app').innerHTML = `
       <div class="screen shop-screen">
-        <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.14"></div>
+        <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_bamboo.jpg')});opacity:0.14"></div>
         <div class="panel">
           <h2>商 栈</h2>
           <p>物资 <span style="color:var(--gold-bright)">${this.supply}</span> · 牌组 ${this.cards.length}张</p>
@@ -1454,7 +1488,7 @@ class GameController {
     const healAmount = Math.floor(this.maxHp * 0.25);
     document.getElementById('app').innerHTML = `
       <div class="screen rest-screen">
-        <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.16"></div>
+        <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_bamboo.jpg')});opacity:0.16"></div>
         <div class="panel">
           <h2>休 整</h2>
           <p>竹影婆娑，暂且歇脚。</p>
@@ -1483,7 +1517,7 @@ class GameController {
     this.state = 'upgrade';
     document.getElementById('app').innerHTML = `
       <div class="screen upgrade-screen">
-        <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.14"></div>
+        <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_bamboo.jpg')});opacity:0.14"></div>
         <div class="panel">
           <h2>改 造 站</h2>
           <p>物资 <span style="color:var(--gold-bright)">${this.supply}</span> · 牌组 ${this.cards.length}张</p>
@@ -1562,7 +1596,7 @@ class GameController {
 
     document.getElementById('app').innerHTML = `
       <div class="screen event-screen">
-        <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.16"></div>
+        <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_bamboo.jpg')});opacity:0.16"></div>
         <div class="panel">
           <h2>奇遇 · ${event.title}</h2>
           <p>${event.desc}</p>
@@ -1684,7 +1718,7 @@ class GameController {
     const nextRegion = REGIONS[this.currentRegion];
     document.getElementById('app').innerHTML = `
       <div class="screen victory-screen">
-        <div class="ink-bg" style="background-image:url('assets/bg_bamboo.jpg');opacity:0.2"></div>
+        <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_bamboo.jpg')});opacity:0.2"></div>
         <div class="panel victory-final-panel">
           <h2>${prevRegion.name} 踏破</h2>
           <div class="result-summary">
@@ -1714,7 +1748,7 @@ class GameController {
     const isFinalVictory = this.currentRegion >= REGIONS.length - 1;
     document.getElementById('app').innerHTML = `
       <div class="screen victory-screen">
-        <div class="ink-bg" style="background-image:url('assets/bg_menu_fan_kuan.jpg');opacity:0.3"></div>
+        <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_menu_fan_kuan.jpg')});opacity:0.3"></div>
         <div class="panel victory-final-panel">
           <h2>${isFinalVictory ? '登 峰' : '落 幕'}</h2>
           <div class="victory-title">${isFinalVictory ? '—— 《织律》掌握者 ——' : '—— 征程暂歇 ——'}</div>

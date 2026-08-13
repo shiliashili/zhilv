@@ -355,6 +355,8 @@ class BattleCore {
     if (this.phase !== 'player_input') return { accepted: false, reason: '非玩家输入阶段' };
 
     this._log('--- 结束回合 ---');
+    // Track enemy actions this turn for animation playback
+    this.enemyTurnSummary = { attacked: false, totalDamage: 0, hpDamage: 0, shieldAbsorbed: 0 };
 
     // Discard non-retain cards
     const toKeep = [];
@@ -424,7 +426,7 @@ class BattleCore {
     this.phase = 'player_input';
 
     this._checkEndConditions();
-    return { accepted: true, result: this.getResult(), events: [...this.events], log: [...this.battleLog] };
+    return { accepted: true, result: this.getResult(), events: [...this.events], log: [...this.battleLog], enemyTurnSummary: { ...this.enemyTurnSummary } };
   }
 
   // ---- CARD EXECUTION ----
@@ -771,11 +773,14 @@ class BattleCore {
   }
 
   _applyDamageToPlayer(amount, sourceName, skillName, enemyId) {
+    const originalAmount = amount;
+    let shieldAbsorbed = 0;
     // Shield absorption
     if (this.shield > 0) {
       const absorbed = Math.min(this.shield, amount);
       this.shield -= absorbed;
       amount -= absorbed;
+      shieldAbsorbed = absorbed;
     }
 
     amount = Math.max(0, Math.floor(amount));
@@ -784,8 +789,13 @@ class BattleCore {
 
     this._addEvent('player_damaged', { amount, sourceName, skillName, enemyId, hpRemaining: this.hp });
 
-    // Apply status from enemy
-    // Handled in _executeEnemyTurn
+    // Track enemy turn summary (for animation)
+    if (this.enemyTurnSummary) {
+      this.enemyTurnSummary.attacked = true;
+      this.enemyTurnSummary.totalDamage += originalAmount;
+      this.enemyTurnSummary.hpDamage += amount;
+      this.enemyTurnSummary.shieldAbsorbed += shieldAbsorbed;
+    }
 
     if (this.hp <= 0) {
       this.hp = 0;
@@ -848,7 +858,7 @@ class BattleCore {
     // Build preview text
     let previewText = '';
     if (picked.intent === 'attack') {
-      previewText = `${picked.hits > 1 ? pulled.hits + '×' : ''}${picked.damagePerHit * (picked.hits || 1)}伤害`;
+      previewText = `${picked.hits > 1 ? picked.hits + '×' : ''}${picked.damagePerHit * (picked.hits || 1)}伤害`;
       if (picked.applyStatus) {
         previewText += ` +${picked.applyStatus.stacks}层${STATUS[picked.applyStatus.statusId]?.name || ''}`;
       }
@@ -1123,7 +1133,9 @@ class BattleCore {
         defense: e.defense, alive: e.alive, shield: e.shield,
         statuses: e.statuses, type: e.definition?.type || 'normal',
         color: e.definition?.color || '#b8a684',
-        tags: e.definition?.tags || []
+        tags: e.definition?.tags || [],
+        definitionId: e.definition?.id || e.id,
+        glyph: e.definition?.glyph || e.name.charAt(0)
       })),
       swordIntent: this.swordIntent,
       momentum: this.momentum,
