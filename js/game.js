@@ -45,30 +45,37 @@ class GameController {
     document.getElementById('app').innerHTML = `
       <div class="screen menu-screen">
         <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_menu_fan_kuan.jpg')})"></div>
+        <div class="menu-ink-float">
+          <span class="ink-dot d1"></span><span class="ink-dot d2"></span><span class="ink-dot d3"></span>
+          <span class="ink-dot d4"></span><span class="ink-dot d5"></span><span class="ink-dot d6"></span>
+        </div>
         <div class="menu-content">
           <div class="game-title">
-            <div class="title-calligraphy">织律</div>
+            <div class="title-main">
+              <span class="title-char t1">织</span><span class="title-char t2">律</span>
+            </div>
             <div class="seal title-seal">律</div>
             <p class="subtitle">WEAVELINE</p>
-            <p class="tagline">构筑你的命运之律</p>
+            <div class="menu-divider"><span class="divider-dot"></span><span class="divider-line"></span><span class="divider-dot"></span></div>
+            <p class="tagline">织 天 地 经 纬 · 律 万 象 乾 坤</p>
           </div>
           <div class="menu-buttons">
-            <button class="btn btn-primary btn-large" onclick="game.selectCharacter()">入 局</button>
-            <button class="btn btn-secondary" onclick="game.showHelp()">玩法说明</button>
+            <button class="btn-ink-primary" onclick="game.selectCharacter()"><span class="btn-ink-glow"></span><span class="btn-ink-text">入 局</span></button>
+            <button class="btn-ink-ghost" onclick="game.showHelp()">玩法说明</button>
           </div>
-          <div class="menu-version">v1.4 卡牌重构 · <a href="admin/" target="_blank" style="color:var(--gold);text-decoration:underline" onclick="event.stopPropagation()">后台管理</a></div>
           <div class="menu-characters">
-            <div class="char-preview swordsman">
+            <div class="char-preview swordsman" onclick="game.pickCharacter('swordsman')">
               <div class="char-icon" style="background-image:url(${wlAsset('assets/char_swordsman.jpg')})"></div>
               <div class="char-name">剑圣</div>
               <div class="char-desc">灵巧华丽 · 剑气纵横</div>
             </div>
-            <div class="char-preview martial">
+            <div class="char-preview martial" onclick="game.pickCharacter('martialArtist')">
               <div class="char-icon" style="background-image:url(${wlAsset('assets/char_martial.jpg')})"></div>
               <div class="char-name">武圣</div>
               <div class="char-desc">大开大合 · 以力破巧</div>
             </div>
           </div>
+          <div class="menu-version">v1.4 卡牌重构 · <a href="admin/" target="_blank" style="color:var(--gold);text-decoration:underline" onclick="event.stopPropagation()">后台管理</a></div>
         </div>
       </div>
     `;
