@@ -45,14 +45,20 @@ class BattleCore {
     // Resources
     this.swordIntent = 0;
     this.momentum = 0;
+    this.focus = 0;
 
-    // Signature sword / Martial style
+    // Signature sword / Martial style / Arrow style
     this.signatureSword = setup.signatureSword || null;
     this.martialStyle = setup.martialStyle || null;
+    this.arrowStyle = setup.arrowStyle || null;
 
     // 混元真意：开局自带1蓄势
     if (this.martialStyle && this.martialStyle.effect?.startMomentum) {
       this.momentum = this.martialStyle.effect.startMomentum;
+    }
+    // 鹰眼流派：开局自带1专注
+    if (this.arrowStyle && this.arrowStyle.effect?.startFocus) {
+      this.focus = this.arrowStyle.effect.startFocus;
     }
 
     // Intent tracking - MUST come before _initEnemies (which uses it)
@@ -94,6 +100,7 @@ class BattleCore {
       zeroCostShieldUsed: false,
       firstShieldBonusUsed: false,
       firstQiDiscounted: false,
+      firstArrowDiscounted: false,
       firstCost2Attacked: false,
       chain3DiffCount: 0,
       chain3DiffCards: [],
@@ -285,6 +292,14 @@ class BattleCore {
         this.momentum = Math.min(this._momentumMax(), this.momentum + gain);
         this._addEvent('resource_changed', { resource: 'momentum', value: this.momentum });
       }
+      if (rc.focus) {
+        this.focus = Math.min(3, this.focus + rc.focus);
+        this._addEvent('resource_changed', { resource: 'focus', value: this.focus });
+        if (this.focus >= 3) {
+          this._addEvent('ultimate_ready', {});
+          this._log('🎯 专注满3！大招就绪！');
+        }
+      }
     }
 
     // Combo bonus for 踏月连环
@@ -315,19 +330,22 @@ class BattleCore {
     return { accepted: true, result: this.getResult(), events: [...this.events], log: [...this.battleLog] };
   }
 
-  /** Cast ultimate (剑圣大招) */
+  /** Cast ultimate (剑圣大招/弓箭手大招) */
   castUltimate() {
     if (this.phase !== 'player_input') return { accepted: false, reason: '非玩家输入阶段' };
-    if (this.swordIntent < 3) return { accepted: false, reason: '剑意不足3点' };
     if (!this.setup.character.ultimate) return { accepted: false, reason: '无大招' };
 
+    const res = this._getUltimateResource();
+    if (res.value < 3) return { accepted: false, reason: res.key === 'focus' ? '专注不足3点' : '剑意不足3点' };
+
     const ultimate = this.setup.character.ultimate;
-    this.swordIntent = 0;
+    if (res.key === 'focus') this.focus = 0;
+    else this.swordIntent = 0;
     this.ultimateCastedThisTurn = true;
 
     this._addEvent('ultimate_started', {});
-    this._addEvent('resource_changed', { resource: 'sword_intent', value: 0 });
-    this._log('⚔️ 万剑归流！');
+    this._addEvent('resource_changed', { resource: res.key, value: 0 });
+    this._log(res.key === 'focus' ? '🎯 万箭齐发！' : '⚔️ 万剑归流！');
 
     // Execute ultimate effects
     for (const effect of ultimate.effects) {
@@ -361,9 +379,23 @@ class BattleCore {
       this._addEvent('shield_changed', { shield: this.shield, delta: 8 });
     }
 
+    // 鹰眼流派：大招后抽2张
+    if (this.arrowStyle && this.arrowStyle.effect?.ultimateDraw) {
+      this._drawCards(this.arrowStyle.effect.ultimateDraw);
+      this._log(`🃏 ${this.arrowStyle.name}：大招后抽${this.arrowStyle.effect.ultimateDraw}张`);
+    }
+
     this._addEvent('ultimate_finished', {});
     this._checkEndConditions();
     return { accepted: true, result: this.getResult(), events: [...this.events], log: [...this.battleLog] };
+  }
+
+  /** 大招资源（剑意/专注） */
+  _getUltimateResource() {
+    if (this.setup.character.id === 'archer') {
+      return { key: 'focus', value: this.focus };
+    }
+    return { key: 'sword_intent', value: this.swordIntent };
   }
 
   /** End player turn */
@@ -413,6 +445,7 @@ class BattleCore {
     this._eqState.firstHitPoisonUsed = false;
     this._eqState.energyOnReshuffleUsed = 0;
     this._eqState.firstQiDiscounted = false;
+    this._eqState.firstArrowDiscounted = false;
     this._eqState.firstCost2Attacked = false;
     this._eqState.chain3DiffCount = 0;
     this._eqState.chain3DiffCards = [];
@@ -456,12 +489,17 @@ class BattleCore {
       if (effect.type === 'damage') {
         const hits = effect.hits || 1;
         const multiplier = effect.multiplier || 1;
+        // 计算无视防御（贯穿箭 + 穿云流派）
+        let ignoreDef = effect.ignoreDef || 0;
+        if (this.arrowStyle && this.arrowStyle.effect?.arrowIgnoreDef && cardDef.roleCategory === 'arrow') {
+          ignoreDef += this.arrowStyle.effect.arrowIgnoreDef;
+        }
 
         if (effect.allEnemies) {
           const alive = this.enemies.filter(e => e.alive);
           for (const enemy of alive) {
             for (let h = 0; h < hits; h++) {
-              this._dealDamage(enemy.id, multiplier, [cardDef.id], cardDef.hitPreset);
+              this._dealDamage(enemy.id, multiplier, [cardDef.id], cardDef.hitPreset, ignoreDef);
             }
           }
         } else {
@@ -476,7 +514,7 @@ class BattleCore {
           if (target) {
             for (let h = 0; h < hits; h++) {
               const extraMult = this._getDamageModifiers(cardDef, cardInst, target, isHeavy);
-              this._dealDamage(target.id, multiplier * extraMult, [cardDef.id], cardDef.hitPreset);
+              this._dealDamage(target.id, multiplier * extraMult, [cardDef.id], cardDef.hitPreset, ignoreDef);
             }
           }
         }
@@ -521,6 +559,14 @@ class BattleCore {
             const prevCardId = this.cardsPlayedThisTurn[this.cardsPlayedThisTurn.length - 2];
             const prevCard = ALL_CARDS[prevCardId];
             if (prevCard && prevCard.roleCategory === 'sword_qi') {
+              this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+            }
+          }
+        } else if (effect.condition === 'last_card_was_arrow') {
+          if (this.cardsPlayedThisTurn.length >= 2) {
+            const prevCardId = this.cardsPlayedThisTurn[this.cardsPlayedThisTurn.length - 2];
+            const prevCard = ALL_CARDS[prevCardId];
+            if (prevCard && prevCard.roleCategory === 'arrow') {
               this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
             }
           }
@@ -609,6 +655,14 @@ class BattleCore {
     if (this.martialStyle && this.martialStyle.effect?.heavyArmorBreak && isHeavy && targetIds.length > 0) {
       const enemy = this.enemies.find(e => e.id === targetIds[0]);
       if (enemy) this._applyStatus(enemy, 'armorBreak', this.martialStyle.effect.heavyArmorBreak);
+    }
+
+    // 爆裂流派：箭雨附加易伤
+    if (this.arrowStyle && this.arrowStyle.effect?.aoeVulnerable && cardDef.id === 'ar_arrow_rain') {
+      for (const enemy of this.enemies.filter(e => e.alive)) {
+        this._applyStatus(enemy, 'vulnerable', this.arrowStyle.effect.aoeVulnerable);
+      }
+      this._log(`💥 ${this.arrowStyle.name}：箭雨附加易伤`);
     }
 
     // 轻羽剑穗：0费牌+2护盾
@@ -783,6 +837,14 @@ class BattleCore {
       cost = Math.max(0, cost - this.martialStyle.effect.goldenBellCostDown);
     }
 
+    // 疾风流派：每回合第一张箭技费用-1
+    if (this.arrowStyle && this.arrowStyle.effect?.firstArrowCostDown
+        && cardDef.roleCategory === 'arrow' && cardDef.tags?.includes('箭技')
+        && !this._eqState.firstArrowDiscounted) {
+      this._eqState.firstArrowDiscounted = true;
+      cost = Math.max(0, cost - this.arrowStyle.effect.firstArrowCostDown);
+    }
+
     // 裂脉扳指：每回合第一张攻击牌费用+1
     const splitVeinRing = this.equipment.find(e => e.id === 'eq_split_vein_ring');
     if (splitVeinRing && cardDef.cardType === 'attack' && this.cardsPlayedThisTurn.length === 0) {
@@ -794,14 +856,17 @@ class BattleCore {
 
   // ---- DAMAGE ----
 
-  _dealDamage(enemyId, multiplier, tags, hitPreset) {
+  _dealDamage(enemyId, multiplier, tags, hitPreset, ignoreDef = 0) {
     const enemy = this.enemies.find(e => e.id === enemyId);
     if (!enemy || !enemy.alive) return 0;
 
     let damage = this.atk * multiplier;
 
-    // Enemy defense mitigation
-    const totalDef = Math.max(0, enemy._originalDefense - (this._getStatusStacks(enemy, 'armorBreak') * 3));
+    // Enemy defense mitigation (可无视部分防御)
+    let totalDef = Math.max(0, enemy._originalDefense - (this._getStatusStacks(enemy, 'armorBreak') * 3));
+    if (ignoreDef > 0) {
+      totalDef = totalDef * (1 - Math.min(1, ignoreDef));
+    }
     const mitigation = totalDef / (totalDef + ARMOR_CONST);
     damage *= (1 - mitigation);
 
@@ -1199,6 +1264,8 @@ class BattleCore {
       momentum: this.momentum,
       momentumMax: this._momentumMax(),
       martialStyle: this.martialStyle,
+      focus: this.focus,
+      arrowStyle: this.arrowStyle,
       energy: this.energy,
       maxEnergy: this.maxEnergy,
       hand: this.hand,
@@ -1259,7 +1326,7 @@ class BattleCore {
   }
 
   canUltimate() {
-    return this.phase === 'player_input' && this.swordIntent >= 3 && !!this.setup.character.ultimate;
+    return this.phase === 'player_input' && this._getUltimateResource().value >= 3 && !!this.setup.character.ultimate;
   }
 
   getAliveEnemyIds() {

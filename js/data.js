@@ -325,6 +325,102 @@ const MARTIAL_STYLES = [
     effect: { firstFistKickMomentum: 1, heavyDraw: 1 } }
 ];
 
+// ---- 弓箭手技能卡 v1.4 (12张，参考DNF弓箭手) ----
+const ARCHER_CARDS = [
+  // ===== 箭技（命中后 +1 专注） =====
+  { id: 'ar_swift_arrow', name: '迅捷箭', cardType: 'attack', energyCost: 1, roleCategory: 'arrow',
+    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 1.10, hits: 1 }],
+    onCast: { resourceChange: { focus: 1 } },
+    desc: '1.10×；+1专注', hitPreset: 'light', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+  { id: 'ar_pierce_arrow', name: '贯穿箭', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
+    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 1.75, hits: 1, ignoreDef: 0.15 }],
+    onCast: { resourceChange: { focus: 1 } },
+    desc: '1.75×；无视15%防御；+1专注', hitPreset: 'standard', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+  { id: 'ar_rapid_arrows', name: '连珠箭', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
+    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 0.55, hits: 3 }],
+    onCast: { resourceChange: { focus: 1 } },
+    desc: '0.55×3段；+1专注', hitPreset: 'light', castSfx: 'arrow', impactSfx: 'arrow_hit', multiHit: true },
+  { id: 'ar_charged_shot', name: '蓄力重箭', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
+    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 2.20, hits: 1 },
+      { type: 'conditional', condition: 'last_card_was_arrow', effects: [{ type: 'damage', multiplier: 0.30, hits: 1 }] }
+    ],
+    onCast: { resourceChange: { focus: 1 } },
+    desc: '2.20×；上张为箭技+0.30×；+1专注', hitPreset: 'heavy', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+  { id: 'ar_homing_arrow', name: '追踪箭', cardType: 'attack', energyCost: 1, roleCategory: 'arrow',
+    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.30, hits: 1 },
+      { type: 'conditional', condition: 'target_hp_below_50', effects: [{ type: 'damage', multiplier: 0.40, hits: 1 }] }
+    ],
+    onCast: { resourceChange: { focus: 1 } },
+    desc: '1.30×；目标<50%+0.40×；+1专注', hitPreset: 'standard', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+  { id: 'ar_hawk_strike', name: '鹰击', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
+    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 1.70, hits: 1 }],
+    onCast: { resourceChange: { focus: 1 } },
+    desc: '1.70×；鹰袭；+1专注', hitPreset: 'heavy', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+
+  // ===== 散射（AOE，不增专注） =====
+  { id: 'ar_scatter', name: '散射箭', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
+    tags: ['散射'], targetMode: 'enemy_all', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 0.75, hits: 1, allEnemies: true }],
+    desc: '全体0.75×', hitPreset: 'light', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+
+  // ===== 技巧 =====
+  { id: 'ar_eagle_eye', name: '鹰眼', cardType: 'technique', energyCost: 0, roleCategory: 'arrow',
+    tags: ['技巧'], targetMode: 'none', pileKeywords: ['exhaust'],
+    effects: [
+      { type: 'draw_cards', amount: 1 },
+      { type: 'modify_next_damage', tag: 'arrow', bonus: 0.25, duration: 'turn' }
+    ],
+    desc: '抽1张；本回合下张箭技+25%；消耗', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
+  { id: 'ar_backstep', name: '后跳射击', cardType: 'attack', energyCost: 1, roleCategory: 'arrow',
+    tags: ['技巧'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.00, hits: 1 },
+      { type: 'gain_shield', amount: 6 }
+    ],
+    desc: '1.00×＋6护盾', hitPreset: 'standard', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+
+  // ===== 奥义 =====
+  { id: 'ar_arrow_rain', name: '箭雨', cardType: 'attack', energyCost: 3, roleCategory: 'arrow',
+    tags: ['散射'], targetMode: 'enemy_all', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 0.45, hits: 4, allEnemies: true }],
+    desc: '全体0.45×4段', hitPreset: 'light', castSfx: 'arrow', impactSfx: 'arrow_hit', multiHit: true },
+  { id: 'ar_snipe', name: '狙击', cardType: 'attack', energyCost: 3, roleCategory: 'arrow',
+    tags: ['散射'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 3.40, hits: 1, executeThreshold: 0.25 }],
+    desc: '3.40×；目标<25%处决', hitPreset: 'execute', castSfx: 'arrow', impactSfx: 'execute' },
+  { id: 'ar_explosive', name: '爆裂箭', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
+    tags: ['散射'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.50, hits: 1 },
+      { type: 'add_status', statusId: 'vulnerable', stacks: 1 }
+    ],
+    desc: '1.50×＋易伤1', hitPreset: 'heavy', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+];
+
+// ---- 箭术流派 v1.4（弓箭手专属，对标名剑/武道真意） ----
+const ARROW_STYLES = [
+  { id: 'style_pierce', name: '穿云流派', glyph: '贯',
+    desc: '所有箭技额外无视15%防御',
+    effect: { arrowIgnoreDef: 0.15 } },
+  { id: 'style_swift', name: '疾风流派', glyph: '疾',
+    desc: '每回合第一张箭技费用-1（最低0）',
+    effect: { firstArrowCostDown: 1 } },
+  { id: 'style_hawk', name: '鹰眼流派', glyph: '鹰',
+    desc: '开局自带1专注，释放大招后抽2张',
+    effect: { startFocus: 1, ultimateDraw: 2 } },
+  { id: 'style_blast', name: '爆裂流派', glyph: '爆',
+    desc: '箭雨与爆裂箭额外附加易伤1',
+    effect: { aoeVulnerable: 1 } }
+];
+
 // ---- Characters v1.4 ----
 const CHARACTERS = {
   swordsman: {
@@ -365,6 +461,30 @@ const CHARACTERS = {
     styleChoices: MARTIAL_STYLES,
     color: '#FF7043', bgColor: '#FBE9E7',
     description: '大开大合，以力破巧，拳脚重击'
+  },
+  archer: {
+    id: 'archer', name: '弓箭手', className: '弓箭手', glyph: '弓', portrait: 'assets/char_archer.jpg',
+    maxHp: 78, atk: 14, baseEnergy: 3, baseDraw: 5, handLimit: 10,
+    startingCards: [
+      { cardId: 'ar_swift_arrow', count: 3 },
+      { cardId: 'ar_pierce_arrow', count: 2 },
+      { cardId: 'ar_rapid_arrows', count: 2 },
+      { cardId: 'ar_backstep', count: 3 }
+    ],
+    cardPool: ARCHER_CARDS,
+    resource: { name: '专注', key: 'focus', max: 3, start: 0, desc: '打出箭技+1，满3点亮大招' },
+    ultimate: {
+      id: 'ult_wanjian', name: '万箭齐发',
+      desc: '全体0.40×3段箭雨；对生命最低的敌人追加1.20×狙击',
+      effects: [
+        { type: 'damage', multiplier: 0.40, hits: 3, allEnemies: true },
+        { type: 'damage', multiplier: 1.20, hits: 1, targetMode: 'lowest_hp_pct' }
+      ],
+      hitPreset: 'execute', castSfx: 'arrow', impactSfx: 'arrow_hit'
+    },
+    styleChoices: ARROW_STYLES,
+    color: '#7FB59A', bgColor: '#E8F5E9',
+    description: '百步穿杨，箭无虚发'
   }
 };
 
@@ -372,6 +492,7 @@ const CHARACTERS = {
 const ALL_CARDS = {};
 SWORDSMAN_CARDS.forEach(c => ALL_CARDS[c.id] = c);
 MARTIALARTIST_CARDS.forEach(c => ALL_CARDS[c.id] = c);
+ARCHER_CARDS.forEach(c => ALL_CARDS[c.id] = c);
 
 // ---- Enemies v1.4 ----
 const ENEMIES = [

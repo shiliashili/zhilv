@@ -74,6 +74,11 @@ class GameController {
               <div class="char-name">武圣</div>
               <div class="char-desc">大开大合 · 以力破巧</div>
             </div>
+            <div class="char-preview archer" onclick="game.pickCharacter('archer')">
+              <div class="char-icon char-icon-glyph" style="background-image:url(${wlAsset('assets/char_archer.jpg')})">弓</div>
+              <div class="char-name">弓箭手</div>
+              <div class="char-desc">百步穿杨 · 箭无虚发</div>
+            </div>
           </div>
           <div class="menu-version">v1.4 卡牌重构 · <a href="admin/" target="_blank" style="color:var(--gold);text-decoration:underline" onclick="event.stopPropagation()">后台管理</a></div>
         </div>
@@ -128,7 +133,7 @@ class GameController {
       <div class="screen char-select-screen">
         <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_bamboo.jpg')});opacity:0.18"></div>
         <h2 class="screen-title">择 角</h2>
-        <p class="screen-subtitle">剑走轻灵 · 拳行厚重</p>
+        <p class="screen-subtitle">剑走轻灵 · 拳行厚重 · 弓贯长空</p>
         <div class="char-cards">
           <div class="char-card swordsman" onclick="game.pickCharacter('swordsman')">
             <div class="char-card-head">
@@ -172,6 +177,27 @@ class GameController {
             </div>
             <button class="btn btn-primary btn-block">选择武圣</button>
           </div>
+          <div class="char-card archer" onclick="game.pickCharacter('archer')">
+            <div class="char-card-head">
+              <div class="char-portrait char-portrait-glyph" style="background-image:url(${wlAsset('assets/char_archer.jpg')})">弓</div>
+              <div>
+                <h3>弓箭手</h3>
+                <div class="char-stats">
+                  <div class="stat">生命 78</div>
+                  <div class="stat">专注 0-3</div>
+                  <div class="stat">起始牌组 10张</div>
+                </div>
+              </div>
+            </div>
+            <p>百步穿杨，箭无虚发。打出箭技积攒专注，满3点亮大招，箭雨贯穿全场。</p>
+            <div class="char-skills-preview">
+              <span class="skill-tag">迅捷箭</span>
+              <span class="skill-tag">贯穿箭</span>
+              <span class="skill-tag">连珠箭</span>
+              <span class="skill-tag tag-more">+9</span>
+            </div>
+            <button class="btn btn-primary btn-block">选择弓箭手</button>
+          </div>
         </div>
         <button class="btn btn-ghost" onclick="game.showMenu()">← 返回</button>
       </div>
@@ -195,6 +221,7 @@ class GameController {
     this.equipment = [];
     this.signatureSword = null;
     this.martialStyle = null;
+    this.arrowStyle = null;
     this.powerBuff = 0;
     this.proficiency = {};
     this.cards.forEach(cid => {
@@ -208,6 +235,8 @@ class GameController {
       this.selectSignatureSword();
     } else if (charId === 'martialArtist') {
       this.selectMartialStyle();
+    } else if (charId === 'archer') {
+      this.selectArrowStyle();
     } else {
       this.startRun();
     }
@@ -270,6 +299,37 @@ class GameController {
   pickStyle(styleId) {
     audio.playUiClick();
     this.martialStyle = (this.character.styleChoices || MARTIAL_STYLES).find(s => s.id === styleId);
+    this.startRun();
+  }
+
+  /** 弓箭手开局择箭术流派 */
+  selectArrowStyle() {
+    this.state = 'style_select';
+    const styles = this.character.styleChoices || ARROW_STYLES;
+    document.getElementById('app').innerHTML = `
+      <div class="screen sword-select-screen">
+        <div class="ink-bg" style="background-image:url(${wlAsset('assets/bg_bamboo.jpg')});opacity:0.15"></div>
+        <h2 class="screen-title">择 箭 术</h2>
+        <p class="screen-subtitle">每局只修一门箭术，整局锁定</p>
+        <div class="sword-cards">
+          ${styles.map(style => `
+            <div class="sword-card" onclick="game.pickArrowStyle('${style.id}')">
+              <div class="seal sword-name-seal">${style.glyph}</div>
+              <div style="flex:1;min-width:0">
+                <h3>${style.name}</h3>
+                <p>${style.desc}</p>
+              </div>
+              <button class="btn btn-primary btn-sm">习此箭</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  pickArrowStyle(styleId) {
+    audio.playUiClick();
+    this.arrowStyle = (this.character.styleChoices || ARROW_STYLES).find(s => s.id === styleId);
     this.startRun();
   }
 
@@ -455,6 +515,7 @@ class GameController {
       equipment: this.equipment,
       signatureSword: this.signatureSword,
       martialStyle: this.martialStyle,
+      arrowStyle: this.arrowStyle,
       powerBuff: this.powerBuff,
       currentHp: this.hp,
       enemies: encounter.enemies,
@@ -601,11 +662,16 @@ class GameController {
             <div class="resource-display-v2" id="swordIntentDisplay">
               <span class="resource-label">剑意</span>
               ${[0,1,2,3].map(i => `<span class="intent-dot ${i < state.swordIntent ? 'filled' : ''}"></span>`).join('')}
-            </div>` : `
+            </div>` : char.id === 'martialArtist' ? `
             <div class="resource-display-v2" id="momentumDisplay">
               <span class="resource-label">蓄势</span>
               ${Array.from({length: state.momentumMax}).map((_, i) => `<span class="momentum-dot ${i < state.momentum ? 'filled' : ''}"></span>`).join('')}
               ${state.martialStyle ? `<span class="martial-style-tag">${state.martialStyle.name}</span>` : ''}
+            </div>` : `
+            <div class="resource-display-v2" id="focusDisplay">
+              <span class="resource-label">专注</span>
+              ${[0,1,2,3].map(i => `<span class="focus-dot ${i < state.focus ? 'filled' : ''}"></span>`).join('')}
+              ${state.arrowStyle ? `<span class="martial-style-tag">${state.arrowStyle.name}</span>` : ''}
             </div>`}
           </div>
           <div class="hud-right">
@@ -621,13 +687,15 @@ class GameController {
         </div>
 
         <!-- Ultimate button (floating) -->
-        ${char.id === 'swordsman' ? `
+        ${char.id === 'swordsman' || char.id === 'archer' ? `
         <div class="ultimate-button-area">
-          <button class="btn-ultimate ${state.swordIntent >= 3 ? 'ready' : 'locked'}"
+          <button class="btn-ultimate ${state[char.id === 'archer' ? 'focus' : 'swordIntent'] >= 3 ? 'ready' : 'locked'}"
                   id="ultimateBtn"
                   onclick="game._castUltimate()"
-                  ${state.swordIntent < 3 ? 'disabled' : ''}>
-            ${state.swordIntent >= 3 ? '⚔️ 万剑归流' : `剑意 ${state.swordIntent}/3`}
+                  ${state[char.id === 'archer' ? 'focus' : 'swordIntent'] < 3 ? 'disabled' : ''}>
+            ${char.id === 'archer'
+              ? (state.focus >= 3 ? '🎯 万箭齐发' : `专注 ${state.focus}/3`)
+              : (state.swordIntent >= 3 ? '⚔️ 万剑归流' : `剑意 ${state.swordIntent}/3`)}
           </button>
         </div>` : ''}
       </div>
@@ -746,6 +814,8 @@ class GameController {
     if (cardInfo) {
       this._showCastBanner(cardInfo.name, cardInfo.tags[0] || '', false);
       this._animatePlayerAttack();
+      // 施放音效（剑技/箭矢嗖声等）
+      if (cardInfo.castSfx) audio.playSfx(cardInfo.castSfx);
     }
 
     // Animate damage on enemies
@@ -809,7 +879,8 @@ class GameController {
 
   /** Helper: apply ultimate damage animations */
   _applyUltimateAnimations(hpBefore, hitPreset) {
-    this._showCastBanner('万剑归流', '大招', true);
+    const isArcher = this.character.id === 'archer';
+    this._showCastBanner(isArcher ? '万箭齐发' : '万剑归流', '大招', true);
     this._animatePlayerAttack();
     const core = this.battleCore;
     core.enemies.forEach(e => {
@@ -975,6 +1046,13 @@ class GameController {
     const enemyEl = document.getElementById(domId);
     if (!enemyEl || damage <= 0) return;
 
+    const isArcher = this.character.id === 'archer';
+
+    // 弓箭手：箭矢飞向目标
+    if (isArcher) {
+      this._spawnArrow(enemyEl, hitPreset);
+    }
+
     // Hit flash + recoil
     enemyEl.classList.remove('hit-flash', 'hit-recoil');
     void enemyEl.offsetWidth;
@@ -991,6 +1069,18 @@ class GameController {
     setTimeout(() => popup.remove(), 950);
 
     // Particle effects based on hit type
+    if (isArcher) {
+      // 箭矢命中：冲击环 + 绿色箭羽粒子
+      setTimeout(() => {
+        this._spawnImpact(enemyEl, '#8fbc9a');
+        this._spawnParticles(enemyEl, '#7FB59A', hitPreset === 'heavy' ? 8 : 5);
+      }, 160);
+      if (hitPreset === 'execute') { this._shake('execute'); this._flashFrame(); }
+      else if (hitPreset === 'heavy') { this._shake('heavy'); this._flashFrame(); }
+      else this._shake('light');
+      return;
+    }
+
     const cat = hitPreset;
     if (cat === 'execute') {
       this._spawnSlash(enemyEl, '#e0604a');
@@ -1012,6 +1102,33 @@ class GameController {
       this._spawnParticles(enemyEl, '#cbbc9c', 4);
       this._shake('light');
     }
+  }
+
+  /** 箭矢飞行：从玩家飞向目标 */
+  _spawnArrow(targetEl, hitPreset) {
+    const layer = this._fxLayer();
+    const playerEl = document.getElementById('playerSprite');
+    if (!layer || !playerEl) return;
+    const from = this._centerIn(playerEl, layer);
+    const to = this._centerIn(targetEl, layer);
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    const dist = Math.hypot(dx, dy);
+    const len = hitPreset === 'execute' ? 120 : hitPreset === 'heavy' ? 100 : 80;
+
+    const fx = document.createElement('div');
+    fx.className = 'arrow-fx';
+    fx.style.cssText = `left:${from.x}px;top:${from.y - 8}px;width:${len}px;height:16px;--arrow-rot:${angle}deg;--arrow-dist:${dist - len * 0.4}px;`;
+    const color = hitPreset === 'execute' ? '#ecd394' : hitPreset === 'heavy' ? '#e0b070' : '#d8c090';
+    fx.innerHTML = `
+      <svg viewBox="0 0 ${len} 16" width="${len}" height="16" preserveAspectRatio="none">
+        <line x1="2" y1="8" x2="${len - 18}" y2="8" stroke="${color}" stroke-width="2.5" />
+        <polygon points="${len - 20},2 ${len},8 ${len - 20},14" fill="${color}" />
+        <polygon points="2,8 14,3 13,13" fill="${color}" opacity="0.7" />
+      </svg>`;
+    layer.appendChild(fx);
+    setTimeout(() => fx.remove(), 420);
   }
 
   /** Animate player hit from enemy */
@@ -1224,11 +1341,24 @@ class GameController {
         ultBtn.textContent = state.swordIntent >= 3 ? '⚔️ 万剑归流' : `剑意 ${state.swordIntent}/3`;
         ultBtn.disabled = state.swordIntent < 3;
       }
-    } else {
+    } else if (this.character.id === 'martialArtist') {
       const display = document.getElementById('momentumDisplay');
       if (display) {
         const dots = display.querySelectorAll('.momentum-dot');
         dots.forEach((dot, i) => dot.classList.toggle('filled', i < state.momentum));
+      }
+    } else {
+      const display = document.getElementById('focusDisplay');
+      if (display) {
+        const dots = display.querySelectorAll('.focus-dot');
+        dots.forEach((dot, i) => dot.classList.toggle('filled', i < state.focus));
+      }
+      const ultBtn = document.getElementById('ultimateBtn');
+      if (ultBtn) {
+        ultBtn.classList.toggle('ready', state.focus >= 3);
+        ultBtn.classList.toggle('locked', state.focus < 3);
+        ultBtn.textContent = state.focus >= 3 ? '🎯 万箭齐发' : `专注 ${state.focus}/3`;
+        ultBtn.disabled = state.focus < 3;
       }
     }
 

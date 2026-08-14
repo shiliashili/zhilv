@@ -413,6 +413,13 @@ body {
 }
 .char-preview.swordsman .char-icon { border-color: rgba(106,146,173,0.55); }
 .char-preview.martial .char-icon { border-color: rgba(217,142,74,0.55); }
+.char-preview.archer .char-icon { border-color: rgba(107,156,138,0.6); }
+.char-icon-glyph {
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-brush); font-size: 34px; color: #cfe8dd;
+  text-shadow: 0 0 14px rgba(107,156,138,0.6);
+  background: radial-gradient(circle at 35% 30%, rgba(127,181,154,0.15), rgba(0,0,0,0.4)) !important;
+}
 .char-preview .char-name {
   font-size: 16px; font-weight: 600; letter-spacing: 3px;
   font-family: var(--font-brush); color: var(--paper);
@@ -474,6 +481,7 @@ body {
 }
 .char-card.swordsman { --card-accent: var(--azure); }
 .char-card.martial { --card-accent: var(--ember); }
+.char-card.archer { --card-accent: var(--jade); }
 .char-card:hover, .char-card:active { border-color: var(--card-accent, var(--gold)); transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
 .char-card-head { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; }
 .char-glyph {
@@ -502,6 +510,13 @@ body {
 }
 .char-card.swordsman .char-portrait { border-color: rgba(106,146,173,0.5); box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 18px rgba(106,146,173,0.25); }
 .char-card.martialArtist .char-portrait { border-color: rgba(217,142,74,0.5); box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 18px rgba(217,142,74,0.25); }
+.char-card.archer .char-portrait { border-color: rgba(107,156,138,0.55); box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 18px rgba(107,156,138,0.3); }
+.char-portrait-glyph {
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-brush); font-size: 42px; color: #cfe8dd;
+  text-shadow: 0 0 16px rgba(107,156,138,0.6);
+  background: radial-gradient(circle at 35% 30%, rgba(127,181,154,0.15), rgba(0,0,0,0.4)) !important;
+}
 .char-card.martial .char-glyph { color: var(--ember); box-shadow: 0 0 22px rgba(217,142,74,0.25); }
 .char-card h3 { font-family: var(--font-brush); font-size: 26px; font-weight: 400; letter-spacing: 5px; }
 .char-stats { display: flex; gap: 14px; margin-bottom: 8px; }
@@ -1302,6 +1317,20 @@ body {
   20% { opacity: 1; }
   100% { opacity: 0.9; transform: translate(var(--fx-to-x, 0), var(--fx-to-y, 0)) scale(1.05) rotate(45deg); }
 }
+/* 箭矢飞行 */
+.arrow-fx {
+  position: absolute;
+  z-index: 11;
+  pointer-events: none;
+  transform-origin: left center;
+  animation: arrowFly 0.34s cubic-bezier(0.2, 0.6, 0.35, 1) forwards;
+}
+@keyframes arrowFly {
+  0% { opacity: 0; transform: rotate(var(--arrow-rot, 0deg)) translateX(-30px); }
+  15% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { opacity: 0; transform: rotate(var(--arrow-rot, 0deg)) translateX(var(--arrow-dist, 200px)); }
+}
 .impact-ring {
   position: absolute;
   z-index: 10;
@@ -1767,13 +1796,14 @@ body {
   padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(201,162,75,0.25);
   white-space: nowrap;
 }
-.intent-dot, .momentum-dot {
+.intent-dot, .momentum-dot, .focus-dot {
   display: inline-block; width: 10px; height: 10px; border-radius: 50%;
   background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2);
   transition: all 0.2s;
 }
 .intent-dot.filled { background: var(--azure); border-color: var(--azure); box-shadow: 0 0 6px rgba(106,146,173,0.6); }
 .momentum-dot.filled { background: var(--cinnabar-bright); border-color: var(--cinnabar-bright); box-shadow: 0 0 6px rgba(224,96,74,0.6); }
+.focus-dot.filled { background: var(--jade); border-color: var(--jade); box-shadow: 0 0 6px rgba(107,156,138,0.6); }
 
 /* End Turn button */
 .btn-endturn {

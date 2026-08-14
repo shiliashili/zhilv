@@ -258,6 +258,8 @@ class AudioSystem {
       // Combat
       case 'blade_light': this._playBladeLight(); break;
       case 'blade_multi': this._playBladeMulti(); break;
+      case 'arrow': this._playArrow(); break;
+      case 'arrow_hit': this._playArrowHit(); break;
       case 'sword_qi': this._playSwordQi(); break;
       case 'sword_qi_bloom': this._playSwordQiBloom(); break;
       case 'fist_heavy': this._playFistHeavy(); break;
@@ -273,6 +275,37 @@ class AudioSystem {
 
   _playBladeLight() {
     this._noiseBurst(0.06, 3000, 8000, 'bandpass', 0.15);
+  }
+
+  // 箭矢：拉弦嗖声（高频下坠）
+  _playArrow() {
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(2200, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(600, this.ctx.currentTime + 0.18);
+    gain.gain.setValueAtTime(0.14, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.22);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.22);
+  }
+
+  // 箭矢命中：短促金属入木声
+  _playArrowHit() {
+    this._noiseBurst(0.05, 1200, 4000, 'bandpass', 0.18);
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(400, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(120, this.ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.1);
   }
 
   _playBladeMulti() {

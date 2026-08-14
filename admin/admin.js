@@ -27,6 +27,7 @@ const Admin = {
       characters: JSON.parse(JSON.stringify(CHARACTERS)),
       swordsmanCards: JSON.parse(JSON.stringify(SWORDSMAN_CARDS)),
       martialCards: JSON.parse(JSON.stringify(MARTIALARTIST_CARDS)),
+      archerCards: JSON.parse(JSON.stringify(typeof ARCHER_CARDS !== 'undefined' ? ARCHER_CARDS : [])),
       enemies: JSON.parse(JSON.stringify(ENEMIES)),
       equipment: JSON.parse(JSON.stringify(EQUIPMENT)),
       signatureSwords: JSON.parse(JSON.stringify(SIGNATURE_SWORDS)),
@@ -110,8 +111,8 @@ const Admin = {
     main.innerHTML = `
       <div class="page-header"><h2>📊 总览仪表盘</h2><span class="stats">变更: ${this._changeCount} 项</span></div>
       <div class="stat-grid">
-        <div class="stat-card"><div class="stat-num">2</div><div class="stat-label">角色</div></div>
-        <div class="stat-card"><div class="stat-num">${d.swordsmanCards.length + d.martialCards.length}</div><div class="stat-label">技能卡总数</div></div>
+        <div class="stat-card"><div class="stat-num">${Object.keys(d.characters).length}</div><div class="stat-label">角色</div></div>
+        <div class="stat-card"><div class="stat-num">${d.swordsmanCards.length + d.martialCards.length + d.archerCards.length}</div><div class="stat-label">技能卡总数</div></div>
         <div class="stat-card"><div class="stat-num">${d.enemies.length}</div><div class="stat-label">敌人模板</div></div>
         <div class="stat-card"><div class="stat-num">${d.equipment.length}</div><div class="stat-label">装备</div></div>
         <div class="stat-card"><div class="stat-num">${d.signatureSwords.length}</div><div class="stat-label">名剑</div></div>
@@ -173,11 +174,11 @@ const Admin = {
   // ---- CARDS ----
 
   _renderCards(main) {
-    const allCards = [...this._data.swordsmanCards, ...this._data.martialCards];
+    const allCards = [...this._data.swordsmanCards, ...this._data.martialCards, ...this._data.archerCards];
     main.innerHTML = this._pageHeader('🃏 技能卡编辑') + `<div class="search-bar">
       <input class="search-input" id="cardSearch" placeholder="搜索卡牌名称、标签..." oninput="Admin._filterCards()">
       <select id="cardFilter" onchange="Admin._filterCards()" style="padding:8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px">
-        <option value="all">全部</option><option value="swordsman">剑圣</option><option value="martialArtist">武圣</option>
+        <option value="all">全部</option><option value="swordsman">剑圣</option><option value="martialArtist">武圣</option><option value="archer">弓箭手</option>
       </select>
     </div><div id="cardTableWrap"></div>`;
 
@@ -187,9 +188,10 @@ const Admin = {
   _filterCards() {
     const q = document.getElementById('cardSearch').value.toLowerCase();
     const f = document.getElementById('cardFilter').value;
-    let all = [...this._data.swordsmanCards, ...this._data.martialCards];
+    let all = [...this._data.swordsmanCards, ...this._data.martialCards, ...this._data.archerCards];
     if (f === 'swordsman') all = this._data.swordsmanCards;
     else if (f === 'martialArtist') all = this._data.martialCards;
+    else if (f === 'archer') all = this._data.archerCards;
     if (q) all = all.filter(c => c.name.includes(q) || c.tags?.some(t => t.includes(q)) || c.desc?.includes(q));
     this._renderCardTable(all);
   },
@@ -505,6 +507,7 @@ const Admin = {
       characters: this._data.characters,
       swordsmanCards: this._data.swordsmanCards,
       martialCards: this._data.martialCards,
+      archerCards: this._data.archerCards,
       enemies: this._data.enemies,
       equipment: this._data.equipment,
       signatureSwords: this._data.signatureSwords,
@@ -558,6 +561,7 @@ const Admin = {
       CHARACTERS: this._data.characters,
       SWORDSMAN_CARDS: this._data.swordsmanCards,
       MARTIALARTIST_CARDS: this._data.martialCards,
+      ARCHER_CARDS: this._data.archerCards,
       ENEMIES: this._data.enemies,
       EQUIPMENT: this._data.equipment,
       SIGNATURE_SWORDS: this._data.signatureSwords,
@@ -592,6 +596,7 @@ const Admin = {
         if (imported.CHARACTERS) this._data.characters = imported.CHARACTERS;
         if (imported.SWORDSMAN_CARDS) this._data.swordsmanCards = imported.SWORDSMAN_CARDS;
         if (imported.MARTIALARTIST_CARDS) this._data.martialCards = imported.MARTIALARTIST_CARDS;
+        if (imported.ARCHER_CARDS) this._data.archerCards = imported.ARCHER_CARDS;
         if (imported.ENEMIES) this._data.enemies = imported.ENEMIES;
         if (imported.EQUIPMENT) this._data.equipment = imported.EQUIPMENT;
         if (imported.SIGNATURE_SWORDS) this._data.signatureSwords = imported.SIGNATURE_SWORDS;
