@@ -831,7 +831,10 @@ class GameController {
     this._refreshBattleHud();
 
     if (result.result?.isOver) {
-      this._finishBattle(result);
+      // 延迟以让击杀动画（dmg-popup 950ms）播完再切结算页
+      setTimeout(() => {
+        if (this.state === 'battle') this._finishBattle(result);
+      }, 1000);
       return;
     }
 
@@ -858,7 +861,9 @@ class GameController {
         this._refreshBattleHud();
         this._animating = false;
         if (result.result?.isOver) {
-          this._finishBattle(result);
+          setTimeout(() => {
+            if (this.state === 'battle') this._finishBattle(result);
+          }, 700);
           return;
         }
         this._reRenderHand();
@@ -870,7 +875,9 @@ class GameController {
       this._refreshBattleHud();
       this._animating = false;
       if (result.result?.isOver) {
-        this._finishBattle(result);
+        setTimeout(() => {
+          if (this.state === 'battle') this._finishBattle(result);
+        }, 700);
         return;
       }
       this._reRenderHand();
@@ -946,10 +953,11 @@ class GameController {
 
     // Game over?
     if (result.result?.isOver) {
+      // 敌人出手动画与伤害跳字（950ms）播完再切结算页
       setTimeout(() => {
         if (this.state === 'battle') this._finishBattle(result);
         this._animating = false;
-      }, 400);
+      }, 1000);
       return;
     }
 
