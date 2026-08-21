@@ -56,10 +56,6 @@ class BattleCore {
     if (this.martialStyle && this.martialStyle.effect?.startMomentum) {
       this.momentum = this.martialStyle.effect.startMomentum;
     }
-    // 鹰眼流派：开局自带1专注
-    if (this.arrowStyle && this.arrowStyle.effect?.startFocus) {
-      this.focus = this.arrowStyle.effect.startFocus;
-    }
 
     // Intent tracking - MUST come before _initEnemies (which uses it)
     this.enemyPlans = {}; // { enemyId: EnemyActionPlan }
@@ -379,12 +375,6 @@ class BattleCore {
       this._addEvent('shield_changed', { shield: this.shield, delta: 8 });
     }
 
-    // 鹰眼流派：大招后抽2张
-    if (this.arrowStyle && this.arrowStyle.effect?.ultimateDraw) {
-      this._drawCards(this.arrowStyle.effect.ultimateDraw);
-      this._log(`🃏 ${this.arrowStyle.name}：大招后抽${this.arrowStyle.effect.ultimateDraw}张`);
-    }
-
     this._addEvent('ultimate_finished', {});
     this._checkEndConditions();
     return { accepted: true, result: this.getResult(), events: [...this.events], log: [...this.battleLog] };
@@ -536,6 +526,35 @@ class BattleCore {
           const enemy = this.enemies.find(e => e.id === targetIds[0] && e.alive);
           if (enemy) this._applyStatus(enemy, effect.statusId, effect.stacks || 1);
         }
+      } else if (effect.type === 'detonate_status') {
+        // 引爆状态：每层造成额外伤害（或按倍率），然后清除该状态
+        const enemy = this.enemies.find(e => e.id === targetIds[0] && e.alive);
+        if (enemy) {
+          const stacks = this._getStatusStacks(enemy, effect.statusId);
+          if (stacks > 0) {
+            let dmgMult = effect.damagePerStack || 0.8;
+            // 猎鹰流派：引爆标记伤害+25%
+            if (effect.statusId === 'mark' && this.arrowStyle && this.arrowStyle.effect?.markDetonateBonus) {
+              dmgMult *= (1 + this.arrowStyle.effect.markDetonateBonus);
+            }
+            // 用 _dealDamage 结算（受防御/易伤影响），倍率 = 层数×每层倍率
+            this._dealDamage(enemy.id, stacks * dmgMult, [cardDef.id, 'detonate'], effect.hitPreset || 'heavy');
+            delete enemy.statuses[effect.statusId];
+            const statusName = STATUS[effect.statusId]?.name || effect.statusId;
+            this._log(`💥 引爆 ${stacks} 层${statusName}！`);
+          }
+        }
+      } else if (effect.type === 'shield_to_damage') {
+        // 护盾反震：将护盾按比例转化为伤害
+        const ratio = effect.ratio || 0.8;
+        const dmgFromShield = Math.floor(this.shield * ratio);
+        if (dmgFromShield > 0) {
+          const enemy = this.enemies.find(e => e.id === targetIds[0] && e.alive);
+          if (enemy) {
+            this._dealDamage(enemy.id, dmgFromShield / Math.max(1, this.atk), [cardDef.id, 'reflect'], 'standard');
+            this._log(`🛡 护盾反震：转化 ${dmgFromShield} 伤害`);
+          }
+        }
       } else if (effect.type === 'add_buff') {
         if (!this.buffs[effect.buffId]) this.buffs[effect.buffId] = { stacks: 0, value: effect.value };
         this.buffs[effect.buffId].stacks = Math.min(effect.maxStacks || 999, this.buffs[effect.buffId].stacks + (effect.stacks || 1));
@@ -625,6 +644,35 @@ class BattleCore {
           if (this.ultimateCastedThisTurn) {
             this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
           }
+        } else if (effect.condition === 'target_has_mark') {
+          if (targetIds.length > 0) {
+            const enemy = this.enemies.find(e => e.id === targetIds[0]);
+            if (enemy && this._getStatusStacks(enemy, 'mark') > 0) {
+              this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+            }
+          }
+        } else if (effect.condition === 'target_has_burn') {
+          if (targetIds.length > 0) {
+            const enemy = this.enemies.find(e => e.id === targetIds[0]);
+            if (enemy && this._getStatusStacks(enemy, 'burn') > 0) {
+              this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+            }
+          }
+        } else if (effect.condition === 'target_has_armorBreak') {
+          if (targetIds.length > 0) {
+            const enemy = this.enemies.find(e => e.id === targetIds[0]);
+            if (enemy && this._getStatusStacks(enemy, 'armorBreak') > 0) {
+              this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+            }
+          }
+        } else if (effect.condition === 'shield_ge_10') {
+          if (this.shield >= 10) {
+            this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+          }
+        } else if (effect.condition === 'sword_qi_might_ge_3') {
+          if ((this.buffs['sword_qi_might']?.stacks || 0) >= 3) {
+            this._executeSubEffects(effect.effects, cardDef, targetIds, isHeavy);
+          }
         }
       }
     }
@@ -655,14 +703,6 @@ class BattleCore {
     if (this.martialStyle && this.martialStyle.effect?.heavyArmorBreak && isHeavy && targetIds.length > 0) {
       const enemy = this.enemies.find(e => e.id === targetIds[0]);
       if (enemy) this._applyStatus(enemy, 'armorBreak', this.martialStyle.effect.heavyArmorBreak);
-    }
-
-    // 爆裂流派：箭雨附加易伤
-    if (this.arrowStyle && this.arrowStyle.effect?.aoeVulnerable && cardDef.id === 'ar_arrow_rain') {
-      for (const enemy of this.enemies.filter(e => e.alive)) {
-        this._applyStatus(enemy, 'vulnerable', this.arrowStyle.effect.aoeVulnerable);
-      }
-      this._log(`💥 ${this.arrowStyle.name}：箭雨附加易伤`);
     }
 
     // 轻羽剑穗：0费牌+2护盾
@@ -705,6 +745,16 @@ class BattleCore {
           const enemy = this.enemies.find(e => e.id === targetIds[0]);
           if (enemy) this._applyStatus(enemy, eff.statusId, eff.stacks || 1);
         }
+      } else if (eff.type === 'detonate_status') {
+        const enemy = this.enemies.find(e => e.id === targetIds[0] && e.alive);
+        if (enemy) {
+          const stacks = this._getStatusStacks(enemy, eff.statusId);
+          if (stacks > 0) {
+            this._dealDamage(enemy.id, stacks * (eff.damagePerStack || 0.8), [cardDef.id, 'detonate'], eff.hitPreset || 'heavy');
+            delete enemy.statuses[eff.statusId];
+            this._log(`💥 引爆 ${stacks} 层${STATUS[eff.statusId]?.name || eff.statusId}！`);
+          }
+        }
       }
     }
   }
@@ -737,6 +787,12 @@ class BattleCore {
     // 混元劲 buff
     if (this.buffs['hunyuan_power']) {
       const b = this.buffs['hunyuan_power'];
+      mult *= (1 + b.value * b.stacks);
+    }
+
+    // 剑气之威 buff：剑气伤害递增
+    if (this.buffs['sword_qi_might'] && cardDef.roleCategory === 'sword_qi') {
+      const b = this.buffs['sword_qi_might'];
       mult *= (1 + b.value * b.stacks);
     }
 
@@ -1068,31 +1124,46 @@ class BattleCore {
       const statusDef = STATUS[statusId];
       if (!statusDef) continue;
 
-      // Poison tick
-      if (timing === 'owner_turn_end' && statusId === 'poison' && instance.stacks > 0) {
-        const dmg = instance.stacks;
-        enemy.hp -= dmg;
-        this._addEvent('damage', { enemyId: enemy.id, amount: dmg, tags: ['poison'], hpRemaining: enemy.hp, maxHp: enemy.maxHp });
-        this._log(`☠ ${enemy.name} 中毒伤害 -${dmg} (${instance.stacks}层)`);
-
-        // 百毒囊：首次中毒结算不减少层数
-        const poisonSac = this.equipment.find(e => e.id === 'eq_poison_sac');
-        if (poisonSac && !this._eqState.firstPoisonNoDecayUsed[enemy.id]) {
-          this._eqState.firstPoisonNoDecayUsed[enemy.id] = true;
-          this._log('☠ 百毒囊：中毒层数保持');
-        } else {
-          instance.stacks = Math.max(0, instance.stacks - 1);
-        }
-
-        if (enemy.hp <= 0) {
-          enemy.hp = 0;
-          enemy.alive = false;
+      // DoT 结算（中毒/灼烧等持续伤害）
+      if (timing === statusDef.decayTiming && statusDef.onTick && instance.stacks > 0) {
+        const tick = statusDef.onTick(instance.stacks);
+        if (tick.type === 'damage' && tick.amount > 0) {
+          let dmg = tick.amount;
+          // 烈焰流派：灼烧每层伤害+1
+          if (statusId === 'burn' && this.arrowStyle && this.arrowStyle.effect?.burnDamageBonus) {
+            dmg += instance.stacks * this.arrowStyle.effect.burnDamageBonus;
+          }
+          // 护盾吸收（除非穿透护盾）
+          if (!tick.bypassShield && enemy.shield > 0) {
+            const absorbed = Math.min(enemy.shield, dmg);
+            enemy.shield -= absorbed;
+            dmg -= absorbed;
+          }
+          dmg = Math.max(0, Math.floor(dmg));
+          enemy.hp -= dmg;
+          this._addEvent('damage', { enemyId: enemy.id, amount: dmg, tags: tick.tags || [statusId], hpRemaining: enemy.hp, maxHp: enemy.maxHp });
+          this._log(`☠ ${enemy.name} ${statusDef.name}伤害 -${dmg} (${instance.stacks}层)`);
+          if (enemy.hp <= 0) {
+            enemy.hp = 0;
+            enemy.alive = false;
+          }
         }
       }
 
-      // Decay
+      // 衰减（标记/破甲/虚弱/易伤/持续伤害层数）
       if (statusDef.decayTiming === 'round_end' || statusDef.decayTiming === 'owner_turn_end') {
-        instance.stacks = Math.max(0, instance.stacks - (statusDef.decay || 0));
+        // 百毒囊：首次中毒结算不减少层数
+        if (statusId === 'poison') {
+          const poisonSac = this.equipment.find(e => e.id === 'eq_poison_sac');
+          if (poisonSac && !this._eqState.firstPoisonNoDecayUsed[enemy.id]) {
+            this._eqState.firstPoisonNoDecayUsed[enemy.id] = true;
+            this._log('☠ 百毒囊：中毒层数保持');
+          } else {
+            instance.stacks = Math.max(0, instance.stacks - (statusDef.decay || 0));
+          }
+        } else {
+          instance.stacks = Math.max(0, instance.stacks - (statusDef.decay || 0));
+        }
       }
 
       if (instance.stacks <= 0) toRemove.push(statusId);
@@ -1110,6 +1181,16 @@ class BattleCore {
     if (!enemy.statuses) enemy.statuses = {};
     const statusDef = STATUS[statusId];
     if (!statusDef) return;
+
+    // 箭术流派加成
+    if (this.arrowStyle) {
+      if (statusId === 'mark' && this.arrowStyle.effect?.markBonus) {
+        stacks += this.arrowStyle.effect.markBonus;
+      }
+      if (statusId === 'burn' && this.arrowStyle.effect?.burnStackBonus) {
+        stacks += this.arrowStyle.effect.burnStackBonus;
+      }
+    }
 
     const existing = enemy.statuses[statusId];
     const current = existing ? existing.stacks : 0;

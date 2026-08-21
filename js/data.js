@@ -10,6 +10,16 @@ const STATUS = {
     maxStacks: 30, decay: 1, decayTiming: 'owner_turn_end', bypassShield: true,
     onTick: (stacks) => ({ type: 'damage', amount: stacks, bypassShield: true, tags: ['dot', 'poison'] })
   },
+  burn: {
+    id: 'burn', name: '灼烧', nameKey: '灼烧',
+    maxStacks: 20, decay: 2, decayTiming: 'owner_turn_end', bypassShield: true,
+    onTick: (stacks) => ({ type: 'damage', amount: stacks * 2, bypassShield: true, tags: ['dot', 'burn'] })
+  },
+  mark: {
+    id: 'mark', name: '标记', nameKey: '标记',
+    maxStacks: 8, decay: 1, decayTiming: 'round_end',
+    desc: '被「引爆标记」类技能消耗，每层造成额外伤害'
+  },
   armorBreak: {
     id: 'armorBreak', name: '破甲', nameKey: '破甲',
     maxStacks: 6, decay: 1, decayTiming: 'round_end',
@@ -129,41 +139,75 @@ const SIGNATURE_SWORDS = [
   }
 ];
 
-// ---- 剑圣技能卡 v1.4 (12张) ----
+// ---- 剑圣技能卡 v1.5 (12张，3流派) ----
+// 流派1：剑气·贯空流（剑气之威叠层）｜流派2：剑意·破军流（剑意爆发）｜流派3：守御·反震流（护盾转化）
 const SWORDSMAN_CARDS = [
-  // ===== 剑技 =====
-  { id: 'ss_cloud_stab', name: '流云刺', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
+  // ===== 流派1：剑气·贯空流（剑气之威 buff 叠层增伤） =====
+  { id: 'ss_green_edge_qi', name: '青锋剑气', cardType: 'attack', energyCost: 1, roleCategory: 'sword_qi',
+    tags: ['剑气'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.00, hits: 1 },
+      { type: 'add_buff', buffId: 'sword_qi_might', stacks: 1, maxStacks: 5, value: 0.10 }
+    ],
+    desc: '1.00×；剑气之威+1（每层剑气+10%）', hitPreset: 'standard', castSfx: 'sword_qi', impactSfx: 'sword_qi' },
+  { id: 'ss_river_qi', name: '横江剑气', cardType: 'attack', energyCost: 2, roleCategory: 'sword_qi',
+    tags: ['剑气'], targetMode: 'enemy_all', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 0.60, hits: 1, allEnemies: true },
+      { type: 'add_buff', buffId: 'sword_qi_might', stacks: 1, maxStacks: 5, value: 0.10 }
+    ],
+    desc: '全体0.60×；剑气之威+1', hitPreset: 'standard', castSfx: 'sword_qi', impactSfx: 'sword_qi' },
+  { id: 'ss_sword_rain', name: '剑雨千寻', cardType: 'attack', energyCost: 3, roleCategory: 'sword_qi',
+    tags: ['剑气'], targetMode: 'enemy_all', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 0.45, hits: 4, allEnemies: true },
+      { type: 'conditional', condition: 'sword_qi_might_ge_3', effects: [{ type: 'damage', multiplier: 0.12, hits: 4, allEnemies: true }] }
+    ],
+    desc: '全体0.45×4段；剑气之威≥3时每段+0.12×', hitPreset: 'light', castSfx: 'sword_qi', impactSfx: 'sword_qi', multiHit: true },
+  { id: 'ss_hidden_edge', name: '藏锋式', cardType: 'technique', energyCost: 0, roleCategory: 'sword_qi',
+    tags: ['剑气'], targetMode: 'none', pileKeywords: ['exhaust'],
+    effects: [
+      { type: 'draw_cards', amount: 1 },
+      { type: 'modify_next_damage', tag: 'sword_qi', bonus: 0.25, duration: 'turn' }
+    ],
+    desc: '抽1张；本回合下张剑气+25%；消耗', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
+
+  // ===== 流派2：剑意·破军流（剑意资源爆发） =====
+  { id: 'ss_cloud_stab', name: '流云刺', cardType: 'attack', energyCost: 0, roleCategory: 'sword_technique',
     tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [{ type: 'damage', multiplier: 0.65, hits: 2 }],
+    effects: [{ type: 'damage', multiplier: 0.55, hits: 2 }],
     onCast: { resourceChange: { sword_intent: 1 } },
-    desc: '0.65×2段；+1剑意', hitPreset: 'light', castSfx: 'blade_light', impactSfx: 'blade_light' },
+    desc: '0费0.55×2段；+1剑意', hitPreset: 'light', castSfx: 'blade_light', impactSfx: 'blade_light' },
+  { id: 'ss_forest_pierce', name: '穿林破影', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
+    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.20, hits: 1 },
+      { type: 'conditional', condition: 'sword_intent_ge_2', effects: [{ type: 'damage', multiplier: 0.60, hits: 1 }] }
+    ],
+    onCast: { resourceChange: { sword_intent: 1 } },
+    desc: '1.20×；剑意≥2时+0.60×；+1剑意', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
+  { id: 'ss_swallow_return', name: '燕返', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
+    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: ['retain'],
+    effects: [{ type: 'damage', multiplier: 1.30, hits: 1 }],
+    onCast: { resourceChange: { sword_intent: 1 }, conditional: { condition: 'was_retained', damageBonus: 0.35 } },
+    desc: '1.30×；保留；+1剑意；跨回合保留后+35%', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
+  { id: 'ss_one_sword_sky', name: '一剑开天', cardType: 'attack', energyCost: 3, roleCategory: 'sword_technique',
+    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 2.80, hits: 1 },
+      { type: 'conditional', condition: 'sword_intent_eq_3', effects: [{ type: 'damage', multiplier: 1.40, hits: 1 }] }
+    ],
+    desc: '2.80×；剑意=3时+1.40×', hitPreset: 'execute', castSfx: 'sword_qi_bloom', impactSfx: 'execute' },
+
+  // ===== 流派3：守御·反震流（护盾 → 伤害） =====
   { id: 'ss_whirlwind', name: '回风斩', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
     tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
     effects: [
       { type: 'damage', multiplier: 1.00, hits: 1 },
-      { type: 'gain_shield', amount: 5 },
-      { type: 'conditional', condition: 'last_card_was_qi', effects: [{ type: 'gain_shield', amount: 3 }] }
+      { type: 'gain_shield', amount: 5 }
     ],
     onCast: { resourceChange: { sword_intent: 1 } },
-    desc: '1.00×；+5护盾（上张剑气时+3）；+1剑意', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
-  { id: 'ss_swallow_return', name: '燕返', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
-    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: ['retain'],
-    effects: [{ type: 'damage', multiplier: 1.35, hits: 1 }],
-    onCast: { resourceChange: { sword_intent: 1 }, conditional: { condition: 'was_retained', damageBonus: 0.30 } },
-    desc: '1.35×；保留；+1剑意；跨回合保留后伤害+30%', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
-  { id: 'ss_moon_combo', name: '踏月连环', cardType: 'attack', energyCost: 2, roleCategory: 'sword_technique',
-    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [{ type: 'damage', multiplier: 0.38, hits: 4 }],
-    onCast: { resourceChange: { sword_intent: 1 }, comboPerUnique: { bonus: 0.06 } },
-    desc: '0.38×4段；+1剑意；每打过不同名剑牌+6%总伤', hitPreset: 'standard', castSfx: 'blade_multi', impactSfx: 'blade_multi', multiHit: true },
-  { id: 'ss_forest_pierce', name: '穿林破影', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
-    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [
-      { type: 'damage', multiplier: 1.15, hits: 1 },
-      { type: 'conditional', condition: 'target_hp_below_50', effects: [{ type: 'damage', multiplier: 0.65, hits: 1 }] }
-    ],
-    onCast: { resourceChange: { sword_intent: 1 } },
-    desc: '1.15×；目标<50%改为1.65×；+1剑意', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
+    desc: '1.00×＋5护盾；+1剑意', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
   { id: 'ss_reflect_sword', name: '折光回剑', cardType: 'attack', energyCost: 1, roleCategory: 'sword_technique',
     tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
     effects: [
@@ -172,133 +216,80 @@ const SWORDSMAN_CARDS = [
       { type: 'conditional', condition: 'enemy_intent_is_attack', effects: [{ type: 'gain_shield', amount: 3 }] }
     ],
     onCast: { resourceChange: { sword_intent: 1 } },
-    desc: '0.90×；+7护盾（敌攻击时+3）；+1剑意', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
-
-  // ===== 剑气 =====
-  { id: 'ss_green_edge_qi', name: '青锋剑气', cardType: 'attack', energyCost: 1, roleCategory: 'sword_qi',
-    tags: ['剑气'], targetMode: 'enemy_single', pileKeywords: [],
+    desc: '0.90×＋7护盾（敌攻击时+3）；+1剑意', hitPreset: 'standard', castSfx: 'blade_light', impactSfx: 'blade_light' },
+  { id: 'ss_iron_will', name: '铁壁剑意', cardType: 'technique', energyCost: 1, roleCategory: 'sword_technique',
+    tags: ['剑技'], targetMode: 'self', pileKeywords: [],
+    effects: [{ type: 'gain_shield', amount: 14 }],
+    desc: '+14护盾', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
+  { id: 'ss_counter_sword', name: '御剑还击', cardType: 'attack', energyCost: 2, roleCategory: 'sword_technique',
+    tags: ['剑技'], targetMode: 'enemy_single', pileKeywords: [],
     effects: [
-      { type: 'damage', multiplier: 1.25, hits: 1 },
-      { type: 'conditional', condition: 'sword_intent_ge_2', effects: [{ type: 'damage', multiplier: 0.45, hits: 1 }] }
+      { type: 'damage', multiplier: 1.20, hits: 1 },
+      { type: 'shield_to_damage', ratio: 0.8 }
     ],
-    desc: '1.25×；剑意≥2追加0.45×', hitPreset: 'standard', castSfx: 'sword_qi', impactSfx: 'sword_qi' },
-  { id: 'ss_river_qi', name: '横江剑气', cardType: 'attack', energyCost: 2, roleCategory: 'sword_qi',
-    tags: ['剑气'], targetMode: 'enemy_all', pileKeywords: [],
-    effects: [
-      { type: 'damage', multiplier: 0.80, hits: 1, allEnemies: true },
-      { type: 'conditional', condition: 'sword_intent_eq_3', effects: [{ type: 'damage', multiplier: 1.05, hits: 1, allEnemies: true }] }
-    ],
-    desc: '全体0.80×；剑意=3时改为1.05×', hitPreset: 'standard', castSfx: 'sword_qi', impactSfx: 'sword_qi' },
-  { id: 'ss_hundred_step_sword', name: '百步飞剑', cardType: 'attack', energyCost: 2, roleCategory: 'sword_qi',
-    tags: ['剑气'], targetMode: 'enemy_single', pileKeywords: ['retain'],
-    effects: [
-      { type: 'damage', multiplier: 1.80, hits: 1 },
-      { type: 'conditional', condition: 'target_hp_below_25', effects: [{ type: 'damage', multiplier: 0.90, hits: 1 }] }
-    ],
-    desc: '1.80×；目标<25%时+50%伤害；保留', hitPreset: 'heavy', castSfx: 'sword_qi', impactSfx: 'sword_qi' },
-  { id: 'ss_sword_rain', name: '剑雨千寻', cardType: 'attack', energyCost: 2, roleCategory: 'sword_qi',
-    tags: ['剑气'], targetMode: 'enemy_all', pileKeywords: [],
-    effects: [
-      { type: 'damage', multiplier: 0.32, hits: 3, allEnemies: true },
-      { type: 'conditional', condition: 'only_one_enemy', effects: [{ type: 'damage', multiplier: 0.36, hits: 5, allEnemies: true }] }
-    ],
-    desc: '全体0.32×3；仅1敌时0.36×5', hitPreset: 'light', castSfx: 'sword_qi', impactSfx: 'sword_qi', multiHit: true },
-
-  // ===== 技法/辅助 =====
-  { id: 'ss_hidden_edge', name: '藏锋式', cardType: 'technique', energyCost: 0, roleCategory: 'sword_qi',
-    tags: ['剑气'], targetMode: 'none', pileKeywords: ['exhaust'],
-    effects: [
-      { type: 'draw_cards', amount: 1 },
-      { type: 'modify_next_damage', tag: 'sword_qi', bonus: 0.25, duration: 'turn' }
-    ],
-    desc: '抽1张；本回合下一张剑气伤害+25%；消耗', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
-  { id: 'ss_one_sword_sky', name: '一剑开天', cardType: 'attack', energyCost: 3, roleCategory: 'sword_qi',
-    tags: ['剑气'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [
-      { type: 'damage', multiplier: 3.20, hits: 1 },
-      { type: 'conditional', condition: 'ultimate_casted_this_turn', effects: [{ type: 'damage', multiplier: 4.30, hits: 1 }] }
-    ],
-    desc: '3.20×；本回合已释放大招→4.30×', hitPreset: 'execute', castSfx: 'sword_qi_bloom', impactSfx: 'execute' },
+    desc: '1.20×；将护盾的80%转化为额外伤害', hitPreset: 'heavy', castSfx: 'sword_qi_bloom', impactSfx: 'execute' },
 ];
 
-// ---- 武圣技能卡 v1.4 (12张) ----
+// ---- 武圣技能卡 v1.5 (12张，3流派) ----
+// 流派1：破甲·碎岳流（破甲协同）｜流派2：脚法·连击流（多段脚法）｜流派3：蓄势·重式流（蓄势重式）
 const MARTIALARTIST_CARDS = [
-  // ===== 拳法 =====
+  // ===== 流派1：破甲·碎岳流（破甲叠层 + 引爆） =====
   { id: 'ms_mountain_fist', name: '开山拳', cardType: 'attack', energyCost: 1, roleCategory: 'fist',
     tags: ['拳法'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [{ type: 'damage', multiplier: 1.45, hits: 1 }],
+    effects: [{ type: 'damage', multiplier: 1.30, hits: 1 }],
     onCast: { resourceChange: { momentum: 1.0 } },
-    desc: '1.45×；+1蓄势', hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
-  { id: 'ms_cannon_fist', name: '崩山炮拳', cardType: 'attack', energyCost: 2, roleCategory: 'fist',
-    tags: ['拳法'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [
-      { type: 'damage', multiplier: 2.25, hits: 1 },
-      { type: 'conditional', condition: 'target_hp_above_70', effects: [{ type: 'damage', multiplier: 2.70, hits: 1 }] }
-    ],
-    onCast: { resourceChange: { momentum: 1.0 } },
-    desc: '2.25×；目标>70%→+20%；+1蓄势', hitPreset: 'heavy', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
-  { id: 'ms_chain_fist', name: '连环炮拳', cardType: 'attack', energyCost: 2, roleCategory: 'fist',
-    tags: ['拳法'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [{ type: 'damage', multiplier: 0.68, hits: 3 }],
-    onCast: { resourceChange: { momentum: 1.0 }, heavyBonus: 0.15 },
-    desc: '0.68×3；重式时总倍率+15%；+1蓄势', hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy', multiHit: true },
+    desc: '1.30×；+1蓄势', hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
   { id: 'ms_armor_break_fist', name: '碎甲拳', cardType: 'attack', energyCost: 1, roleCategory: 'fist',
     tags: ['拳法'], targetMode: 'enemy_single', pileKeywords: [],
     effects: [
-      { type: 'damage', multiplier: 1.15, hits: 1 },
+      { type: 'damage', multiplier: 1.05, hits: 1 },
       { type: 'add_status', statusId: 'armorBreak', stacks: 2 }
     ],
     onCast: { resourceChange: { momentum: 1.0 } },
-    desc: '1.15×＋破甲2；+1蓄势', hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
-  { id: 'ms_overlord_fist', name: '霸王冲拳', cardType: 'attack', energyCost: 3, roleCategory: 'fist',
+    desc: '1.05×＋破甲2；+1蓄势', hitPreset: 'standard', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
+  { id: 'ms_cannon_fist', name: '崩山炮拳', cardType: 'attack', energyCost: 2, roleCategory: 'fist',
     tags: ['拳法'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [{ type: 'damage', multiplier: 3.35, hits: 1, executeThreshold: 0.12 }],
-    onCast: { resourceChange: { momentum: 1.0 }, heavyBonus: 0.25 },
-    desc: '3.35×；重式+25%并带处决；+1蓄势', hitPreset: 'execute', castSfx: 'fist_heavy', impactSfx: 'execute' },
-
-  // ===== 脚法 =====
-  { id: 'ms_ground_split_kick', name: '裂地踢', cardType: 'attack', energyCost: 1, roleCategory: 'kick',
-    tags: ['脚法'], targetMode: 'enemy_single', pileKeywords: [],
     effects: [
-      { type: 'damage', multiplier: 1.55, hits: 1 },
-      { type: 'conditional', condition: 'target_hp_below_50', effects: [{ type: 'damage', multiplier: 1.94, hits: 1 }] }
+      { type: 'damage', multiplier: 1.80, hits: 1 },
+      { type: 'conditional', condition: 'target_has_armorBreak', effects: [{ type: 'damage', multiplier: 0.70, hits: 1 }] }
     ],
     onCast: { resourceChange: { momentum: 1.0 } },
-    desc: '1.55×；目标<50%→+25%；+1蓄势', hitPreset: 'standard', castSfx: 'kick_heavy', impactSfx: 'kick_heavy' },
+    desc: '1.80×；目标有破甲时+0.70×；+1蓄势', hitPreset: 'heavy', castSfx: 'fist_heavy', impactSfx: 'fist_heavy' },
+  { id: 'ms_shatter_fist', name: '破岳重锤', cardType: 'attack', energyCost: 2, roleCategory: 'fist',
+    tags: ['拳法'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.30, hits: 1 },
+      { type: 'detonate_status', statusId: 'armorBreak', damagePerStack: 0.35 }
+    ],
+    onCast: { resourceChange: { momentum: 1.0 } },
+    desc: '1.30×；引爆破甲（每层+0.35×）；+1蓄势', hitPreset: 'execute', castSfx: 'fist_heavy', impactSfx: 'execute' },
+
+  // ===== 流派2：脚法·连击流（多段脚法） =====
+  { id: 'ms_ground_split_kick', name: '裂地踢', cardType: 'attack', energyCost: 1, roleCategory: 'kick',
+    tags: ['脚法'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 1.45, hits: 1 }],
+    onCast: { resourceChange: { momentum: 1.0 } },
+    desc: '1.45×；+1蓄势', hitPreset: 'standard', castSfx: 'kick_heavy', impactSfx: 'kick_heavy' },
+  { id: 'ms_combo_kick', name: '连环脚', cardType: 'attack', energyCost: 1, roleCategory: 'kick',
+    tags: ['脚法'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 0.45, hits: 3 }],
+    onCast: { resourceChange: { momentum: 1.0 } },
+    desc: '0.45×3段；+1蓄势', hitPreset: 'light', castSfx: 'kick_heavy', impactSfx: 'kick_heavy', multiHit: true },
   { id: 'ms_sweep_kick', name: '扫堂腿', cardType: 'attack', energyCost: 2, roleCategory: 'kick',
     tags: ['脚法'], targetMode: 'enemy_all', pileKeywords: [],
     effects: [
-      { type: 'damage', multiplier: 0.90, hits: 1, allEnemies: true },
+      { type: 'damage', multiplier: 0.75, hits: 1, allEnemies: true },
       { type: 'add_status', statusId: 'weak', stacks: 1, allEnemies: true }
     ],
     onCast: { resourceChange: { momentum: 1.0 } },
-    desc: '全体0.90×虚弱1；+1蓄势', hitPreset: 'standard', castSfx: 'kick_heavy', impactSfx: 'kick_heavy' },
+    desc: '全体0.75×虚弱1；+1蓄势', hitPreset: 'standard', castSfx: 'kick_heavy', impactSfx: 'kick_heavy' },
   { id: 'ms_chase_kick', name: '追命腿', cardType: 'attack', energyCost: 2, roleCategory: 'kick',
     tags: ['脚法'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [
-      { type: 'damage', multiplier: 2.10, hits: 1, executeThreshold: 0.12 },
-      { type: 'conditional', condition: 'target_hp_below_30', effects: [{ type: 'damage', multiplier: 3.05, hits: 1, executeThreshold: 0.12 }] }
-    ],
+    effects: [{ type: 'damage', multiplier: 2.00, hits: 1, executeThreshold: 0.12 }],
     onCast: { resourceChange: { momentum: 1.0 } },
-    desc: '2.10×带处决；目标<30%→3.05×处决；+1蓄势', hitPreset: 'heavy', castSfx: 'kick_heavy', impactSfx: 'execute' },
-  { id: 'ms_sky_heavy_kick', name: '裂空重踢', cardType: 'attack', energyCost: 3, roleCategory: 'kick',
-    tags: ['脚法'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [{ type: 'damage', multiplier: 2.95, hits: 1 }],
-    onCast: { resourceChange: { momentum: 1.0 }, heavyShield: 8 },
-    desc: '2.95×；重式时额外8护盾；+1蓄势', hitPreset: 'execute', castSfx: 'kick_heavy', impactSfx: 'execute' },
+    desc: '2.00×带处决；+1蓄势', hitPreset: 'heavy', castSfx: 'kick_heavy', impactSfx: 'execute' },
 
-  // ===== 内功 =====
-  { id: 'ms_hunyuan_force', name: '混元劲', cardType: 'power', energyCost: 1, roleCategory: 'inner_power',
-    tags: ['内功'], targetMode: 'self', pileKeywords: ['exhaust'],
-    effects: [{ type: 'add_buff', buffId: 'hunyuan_power', stacks: 1, maxStacks: 3, value: 0.08 }],
-    desc: '本场拳/脚伤害+8%，最多3层；打出后离开牌堆', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
-  { id: 'ms_golden_bell', name: '金钟劲', cardType: 'technique', energyCost: 1, roleCategory: 'inner_power',
-    tags: ['内功'], targetMode: 'self', pileKeywords: [],
-    effects: [
-      { type: 'gain_shield', amount: 11 },
-      { type: 'conditional', condition: 'momentum_eq_3', effects: [{ type: 'set_keyword', keyword: 'retain', target: 'self' }] }
-    ],
-    desc: '11护盾；蓄势=3时获得保留', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
+  // ===== 流派3：蓄势·重式流（蓄势重式爆发） =====
   { id: 'ms_overlord_qi', name: '霸王真气', cardType: 'technique', energyCost: 0, roleCategory: 'inner_power',
     tags: ['内功'], targetMode: 'self', pileKeywords: ['exhaust'],
     effects: [
@@ -306,6 +297,19 @@ const MARTIALARTIST_CARDS = [
       { type: 'draw_cards', amount: 1 }
     ],
     desc: '蓄势+2，抽1张，消耗', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
+  { id: 'ms_hunyuan_force', name: '混元劲', cardType: 'power', energyCost: 1, roleCategory: 'inner_power',
+    tags: ['内功'], targetMode: 'self', pileKeywords: ['exhaust'],
+    effects: [{ type: 'add_buff', buffId: 'hunyuan_power', stacks: 1, maxStacks: 3, value: 0.08 }],
+    desc: '本场拳/脚伤害+8%，最多3层；打出后离开牌堆', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
+  { id: 'ms_golden_bell', name: '金钟劲', cardType: 'technique', energyCost: 1, roleCategory: 'inner_power',
+    tags: ['内功'], targetMode: 'self', pileKeywords: [],
+    effects: [{ type: 'gain_shield', amount: 11 }],
+    desc: '+11护盾', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
+  { id: 'ms_overlord_fist', name: '霸王冲拳', cardType: 'attack', energyCost: 3, roleCategory: 'fist',
+    tags: ['拳法'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 3.00, hits: 1, executeThreshold: 0.15 }],
+    onCast: { resourceChange: { momentum: 1.0 }, heavyBonus: 0.25 },
+    desc: '3.00×；重式+25%并带处决；+1蓄势', hitPreset: 'execute', castSfx: 'fist_heavy', impactSfx: 'execute' },
 ];
 
 // ---- 武道真意 v1.4（武圣专属，对标剑圣名剑） ----
@@ -325,60 +329,81 @@ const MARTIAL_STYLES = [
     effect: { firstFistKickMomentum: 1, heavyDraw: 1 } }
 ];
 
-// ---- 弓箭手技能卡 v1.4 (12张，参考DNF弓箭手) ----
+// ---- 弓箭手技能卡 v1.5 (12张，3流派) ----
+// 流派1：标记·猎杀流（标记叠层+引爆）｜流派2：连射·暴风流（多段箭）｜流派3：灼烧·烈焰流（灼烧+引爆）
 const ARCHER_CARDS = [
-  // ===== 箭技（命中后 +1 专注） =====
+  // ===== 流派1：标记·猎杀流（标记叠层 + 引爆） =====
+  { id: 'ar_eagle_eye', name: '鹰眼', cardType: 'technique', energyCost: 0, roleCategory: 'arrow',
+    tags: ['标记'], targetMode: 'enemy_single', pileKeywords: ['exhaust'],
+    effects: [{ type: 'add_status', statusId: 'mark', stacks: 2 }],
+    desc: '标记目标+2；消耗', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
+  { id: 'ar_homing_arrow', name: '追踪箭', cardType: 'attack', energyCost: 1, roleCategory: 'arrow',
+    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.20, hits: 1 },
+      { type: 'conditional', condition: 'target_has_mark', effects: [{ type: 'damage', multiplier: 0.50, hits: 1 }] }
+    ],
+    onCast: { resourceChange: { focus: 1 } },
+    desc: '1.20×；目标有标记时+0.50×；+1专注', hitPreset: 'standard', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+  { id: 'ar_hawk_strike', name: '鹰击', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
+    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.60, hits: 1 },
+      { type: 'add_status', statusId: 'mark', stacks: 2 }
+    ],
+    onCast: { resourceChange: { focus: 1 } },
+    desc: '1.60×；标记+2；+1专注', hitPreset: 'heavy', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+  { id: 'ar_snipe', name: '狙击', cardType: 'attack', energyCost: 3, roleCategory: 'arrow',
+    tags: ['标记'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 2.60, hits: 1 },
+      { type: 'detonate_status', statusId: 'mark', damagePerStack: 0.8 }
+    ],
+    desc: '2.60×；引爆标记（每层+0.8×）', hitPreset: 'execute', castSfx: 'arrow', impactSfx: 'execute' },
+
+  // ===== 流派2：连射·暴风流（多段箭） =====
   { id: 'ar_swift_arrow', name: '迅捷箭', cardType: 'attack', energyCost: 1, roleCategory: 'arrow',
     tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
     effects: [{ type: 'damage', multiplier: 1.10, hits: 1 }],
     onCast: { resourceChange: { focus: 1 } },
     desc: '1.10×；+1专注', hitPreset: 'light', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+  { id: 'ar_rapid_arrows', name: '连珠箭', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
+    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [{ type: 'damage', multiplier: 0.50, hits: 3 }],
+    onCast: { resourceChange: { focus: 1 } },
+    desc: '0.50×3段；+1专注', hitPreset: 'light', castSfx: 'arrow', impactSfx: 'arrow_hit', multiHit: true },
   { id: 'ar_pierce_arrow', name: '贯穿箭', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
     tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
     effects: [{ type: 'damage', multiplier: 1.75, hits: 1, ignoreDef: 0.15 }],
     onCast: { resourceChange: { focus: 1 } },
     desc: '1.75×；无视15%防御；+1专注', hitPreset: 'standard', castSfx: 'arrow', impactSfx: 'arrow_hit' },
-  { id: 'ar_rapid_arrows', name: '连珠箭', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
-    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [{ type: 'damage', multiplier: 0.55, hits: 3 }],
-    onCast: { resourceChange: { focus: 1 } },
-    desc: '0.55×3段；+1专注', hitPreset: 'light', castSfx: 'arrow', impactSfx: 'arrow_hit', multiHit: true },
-  { id: 'ar_charged_shot', name: '蓄力重箭', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
-    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [
-      { type: 'damage', multiplier: 2.20, hits: 1 },
-      { type: 'conditional', condition: 'last_card_was_arrow', effects: [{ type: 'damage', multiplier: 0.30, hits: 1 }] }
-    ],
-    onCast: { resourceChange: { focus: 1 } },
-    desc: '2.20×；上张为箭技+0.30×；+1专注', hitPreset: 'heavy', castSfx: 'arrow', impactSfx: 'arrow_hit' },
-  { id: 'ar_homing_arrow', name: '追踪箭', cardType: 'attack', energyCost: 1, roleCategory: 'arrow',
-    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [
-      { type: 'damage', multiplier: 1.30, hits: 1 },
-      { type: 'conditional', condition: 'target_hp_below_50', effects: [{ type: 'damage', multiplier: 0.40, hits: 1 }] }
-    ],
-    onCast: { resourceChange: { focus: 1 } },
-    desc: '1.30×；目标<50%+0.40×；+1专注', hitPreset: 'standard', castSfx: 'arrow', impactSfx: 'arrow_hit' },
-  { id: 'ar_hawk_strike', name: '鹰击', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
-    tags: ['箭技'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [{ type: 'damage', multiplier: 1.70, hits: 1 }],
-    onCast: { resourceChange: { focus: 1 } },
-    desc: '1.70×；鹰袭；+1专注', hitPreset: 'heavy', castSfx: 'arrow', impactSfx: 'arrow_hit' },
-
-  // ===== 散射（AOE，不增专注） =====
-  { id: 'ar_scatter', name: '散射箭', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
+  { id: 'ar_arrow_rain', name: '箭雨', cardType: 'attack', energyCost: 3, roleCategory: 'arrow',
     tags: ['散射'], targetMode: 'enemy_all', pileKeywords: [],
-    effects: [{ type: 'damage', multiplier: 0.75, hits: 1, allEnemies: true }],
-    desc: '全体0.75×', hitPreset: 'light', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+    effects: [{ type: 'damage', multiplier: 0.40, hits: 4, allEnemies: true }],
+    desc: '全体0.40×4段', hitPreset: 'light', castSfx: 'arrow', impactSfx: 'arrow_hit', multiHit: true },
 
-  // ===== 技巧 =====
-  { id: 'ar_eagle_eye', name: '鹰眼', cardType: 'technique', energyCost: 0, roleCategory: 'arrow',
-    tags: ['技巧'], targetMode: 'none', pileKeywords: ['exhaust'],
+  // ===== 流派3：灼烧·烈焰流（灼烧 + 引爆） =====
+  { id: 'ar_fire_arrow', name: '火箭', cardType: 'attack', energyCost: 1, roleCategory: 'arrow',
+    tags: ['灼烧'], targetMode: 'enemy_single', pileKeywords: [],
     effects: [
-      { type: 'draw_cards', amount: 1 },
-      { type: 'modify_next_damage', tag: 'arrow', bonus: 0.25, duration: 'turn' }
+      { type: 'damage', multiplier: 1.00, hits: 1 },
+      { type: 'add_status', statusId: 'burn', stacks: 3 }
     ],
-    desc: '抽1张；本回合下张箭技+25%；消耗', hitPreset: 'none', castSfx: 'inner_power', impactSfx: 'none' },
+    desc: '1.00×；灼烧+3', hitPreset: 'standard', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+  { id: 'ar_explosive', name: '爆裂箭', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
+    tags: ['灼烧'], targetMode: 'enemy_single', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 1.40, hits: 1 },
+      { type: 'detonate_status', statusId: 'burn', damagePerStack: 0.4 }
+    ],
+    desc: '1.40×；引爆灼烧（每层+0.4×）', hitPreset: 'heavy', castSfx: 'arrow', impactSfx: 'arrow_hit' },
+  { id: 'ar_flame_rain', name: '烈焰箭雨', cardType: 'attack', energyCost: 3, roleCategory: 'arrow',
+    tags: ['灼烧'], targetMode: 'enemy_all', pileKeywords: [],
+    effects: [
+      { type: 'damage', multiplier: 0.50, hits: 1, allEnemies: true },
+      { type: 'add_status', statusId: 'burn', stacks: 3, allEnemies: true }
+    ],
+    desc: '全体0.50×；灼烧+3', hitPreset: 'light', castSfx: 'arrow', impactSfx: 'arrow_hit' },
   { id: 'ar_backstep', name: '后跳射击', cardType: 'attack', energyCost: 1, roleCategory: 'arrow',
     tags: ['技巧'], targetMode: 'enemy_single', pileKeywords: [],
     effects: [
@@ -386,39 +411,22 @@ const ARCHER_CARDS = [
       { type: 'gain_shield', amount: 6 }
     ],
     desc: '1.00×＋6护盾', hitPreset: 'standard', castSfx: 'arrow', impactSfx: 'arrow_hit' },
-
-  // ===== 奥义 =====
-  { id: 'ar_arrow_rain', name: '箭雨', cardType: 'attack', energyCost: 3, roleCategory: 'arrow',
-    tags: ['散射'], targetMode: 'enemy_all', pileKeywords: [],
-    effects: [{ type: 'damage', multiplier: 0.45, hits: 4, allEnemies: true }],
-    desc: '全体0.45×4段', hitPreset: 'light', castSfx: 'arrow', impactSfx: 'arrow_hit', multiHit: true },
-  { id: 'ar_snipe', name: '狙击', cardType: 'attack', energyCost: 3, roleCategory: 'arrow',
-    tags: ['散射'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [{ type: 'damage', multiplier: 3.40, hits: 1, executeThreshold: 0.25 }],
-    desc: '3.40×；目标<25%处决', hitPreset: 'execute', castSfx: 'arrow', impactSfx: 'execute' },
-  { id: 'ar_explosive', name: '爆裂箭', cardType: 'attack', energyCost: 2, roleCategory: 'arrow',
-    tags: ['散射'], targetMode: 'enemy_single', pileKeywords: [],
-    effects: [
-      { type: 'damage', multiplier: 1.50, hits: 1 },
-      { type: 'add_status', statusId: 'vulnerable', stacks: 1 }
-    ],
-    desc: '1.50×＋易伤1', hitPreset: 'heavy', castSfx: 'arrow', impactSfx: 'arrow_hit' },
 ];
 
-// ---- 箭术流派 v1.4（弓箭手专属，对标名剑/武道真意） ----
+// ---- 箭术流派 v1.5（弓箭手专属，对标名剑/武道真意，强化3流派） ----
 const ARROW_STYLES = [
   { id: 'style_pierce', name: '穿云流派', glyph: '贯',
-    desc: '所有箭技额外无视15%防御',
+    desc: '所有箭技额外无视15%防御（强化连射流）',
     effect: { arrowIgnoreDef: 0.15 } },
+  { id: 'style_hawk', name: '猎鹰流派', glyph: '鹰',
+    desc: '施加标记时额外+1层，引爆标记伤害+25%（强化标记流）',
+    effect: { markBonus: 1, markDetonateBonus: 0.25 } },
+  { id: 'style_flame', name: '烈焰流派', glyph: '焰',
+    desc: '灼烧每层伤害+1，灼烧层数+1（强化灼烧流）',
+    effect: { burnDamageBonus: 1, burnStackBonus: 1 } },
   { id: 'style_swift', name: '疾风流派', glyph: '疾',
     desc: '每回合第一张箭技费用-1（最低0）',
-    effect: { firstArrowCostDown: 1 } },
-  { id: 'style_hawk', name: '鹰眼流派', glyph: '鹰',
-    desc: '开局自带1专注，释放大招后抽2张',
-    effect: { startFocus: 1, ultimateDraw: 2 } },
-  { id: 'style_blast', name: '爆裂流派', glyph: '爆',
-    desc: '箭雨与爆裂箭额外附加易伤1',
-    effect: { aoeVulnerable: 1 } }
+    effect: { firstArrowCostDown: 1 } }
 ];
 
 // ---- Characters v1.4 ----
@@ -467,8 +475,8 @@ const CHARACTERS = {
     maxHp: 78, atk: 14, baseEnergy: 3, baseDraw: 5, handLimit: 10,
     startingCards: [
       { cardId: 'ar_swift_arrow', count: 3 },
-      { cardId: 'ar_pierce_arrow', count: 2 },
-      { cardId: 'ar_rapid_arrows', count: 2 },
+      { cardId: 'ar_fire_arrow', count: 2 },
+      { cardId: 'ar_homing_arrow', count: 2 },
       { cardId: 'ar_backstep', count: 3 }
     ],
     cardPool: ARCHER_CARDS,
