@@ -75,7 +75,7 @@ class GameController {
               <div class="char-desc">大开大合 · 以力破巧</div>
             </div>
             <div class="char-preview archer" onclick="game.pickCharacter('archer')">
-              <div class="char-icon char-icon-glyph" style="background-image:url(${wlAsset('assets/char_archer.jpg')})">弓</div>
+              <div class="char-icon" style="background-image:url(${wlAsset('assets/char_archer.jpg')})"></div>
               <div class="char-name">弓箭手</div>
               <div class="char-desc">百步穿杨 · 箭无虚发</div>
             </div>
@@ -179,7 +179,7 @@ class GameController {
           </div>
           <div class="char-card archer" onclick="game.pickCharacter('archer')">
             <div class="char-card-head">
-              <div class="char-portrait char-portrait-glyph" style="background-image:url(${wlAsset('assets/char_archer.jpg')})">弓</div>
+              <div class="char-portrait" style="background-image:url(${wlAsset('assets/char_archer.jpg')})"></div>
               <div>
                 <h3>弓箭手</h3>
                 <div class="char-stats">
